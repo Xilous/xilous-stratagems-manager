@@ -88,16 +88,6 @@ jobs:
             -DestinationPath $zipPath `
             -CompressionLevel Optimal
 
-          $zipHash = (
-            Get-FileHash `
-              $zipPath `
-              -Algorithm SHA256
-          ).Hash.ToLowerInvariant()
-
-          "$zipHash *$zipName" | Set-Content `
-              "dist\SHA256SUMS.txt" `
-              -Encoding ascii
-
           "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
 
       - name: Attest artifacts
@@ -115,7 +105,6 @@ jobs:
           $releaseArgs = @(
             "release", "create", $env:GITHUB_REF_NAME,
             "dist\$env:ZIP_NAME",
-            "dist\SHA256SUMS.txt",
             "--verify-tag",
             "--generate-notes",
             "--title", "HD2 Preset Helper $env:GITHUB_REF_NAME"
