@@ -5,31 +5,31 @@ mod list_map;
 mod page_navigation;
 mod page_relation;
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use tracing::{debug, debug_span, info_span};
+use tracing::{debug, debug_span, info_span, warn};
 
 use crate::app_events::{AppEvent, AppEventSink};
 use crate::automation::AutomationSession;
 use crate::item::ItemKind;
-use crate::vision::{RecognizerRuntime, RoiObservation, Slot, SlotLayout};
+use crate::preset::{LocalTemplate, load_template_sample};
+use crate::vision::{RecognizerSession, RoiObservation, Slot, SlotLayout, TemplateClassifier};
 
-use super::{UiState, detect_ui_state, empty_loadout_entry_slot};
+use super::{UiState, empty_loadout_entry_slot, wait_for_stable_ui_state};
 
 use self::click_plan::{DirectClickTarget, find_visible_target, next_visible_target};
-use self::home_activation::{HomeOpenTarget, open_slot_list, wait_for_home_booster_target};
+use self::home_activation::{HomeOpenTarget, home_booster_target, open_slot_list};
 use self::hover::{HoverSample, HoverVerifier};
-use self::list_map::{ListMap, NavigationHint};
+use self::list_map::{ListMap, NavigationHint, PostClickPlacement};
 use self::page_navigation::{PageNavigator, PageSnapshot, PageTurnInput, PageTurnResult};
-use self::page_relation::common_identity_vertical_shift;
 
 const MAX_WHEEL_INPUTS: u32 = 20;
 const CLICK_HOLD_MS: u64 = 45;
 const MAX_TARGET_CLICK_ATTEMPTS: usize = 3;
-const MAX_HOVER_RELOCATIONS: usize = 4;
+const MAX_HOVER_ATTEMPTS: usize = 4;
 const TARGET_POSITION_TOLERANCE: u32 = 2;
-const POST_CLICK_ROW_SNAP_TOLERANCE: f32 = 4.0;
 const POST_CLICK_CONFIRM_TIMEOUT: Duration = Duration::from_millis(400);
 const POST_CLICK_MIN_OBSERVATIONS: u32 = 2;
 const TERMINAL_SETTLE_TIMEOUT: Duration = Duration::from_millis(600);
@@ -47,25 +47,33 @@ impl ScrollDirection {
             Self::Down => "bottom",
         }
     }
+
+    const fn opposite(self) -> Self {
+        match self {
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
+        }
+    }
 }
 
 pub fn apply_empty_loadout_preset(
-    runtime: &RecognizerRuntime,
+    recognizer: RecognizerSession,
     automation: &mut AutomationSession<'_>,
     events: &AppEventSink,
-    items: &[String],
+    presets_path: &Path,
+    templates: &[LocalTemplate],
     apply_in_saved_order: bool,
-) -> Result<()> {
-    if items.len() != 4 {
+) -> Result<RoiObservation> {
+    if templates.len() != 4 {
         bail!(
             "empty loadout preset application requires exactly 4 stratagems, got {}",
-            items.len()
+            templates.len()
         );
     }
 
     let opened_list = {
         let image = automation.capture()?;
-        let result = runtime.recognize(image, SlotLayout::Home)?;
+        let result = recognizer.detect(image, SlotLayout::Home)?;
         let Some(entry_slot) = empty_loadout_entry_slot(&result).cloned() else {
             bail!("current screen is not an empty loadout home layout");
         };
@@ -74,54 +82,71 @@ pub fn apply_empty_loadout_preset(
             item_kind: ItemKind::Stratagem,
             point: entry_slot.center(),
         };
-        open_slot_list(automation, runtime, target)?
+        open_slot_list(automation, recognizer, target)?
     };
+    let sources = templates
+        .iter()
+        .map(|template| {
+            load_template_sample(presets_path, template)
+                .map(|sample| (template.path.clone(), sample))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let classifier = TemplateClassifier::new(
+        ItemKind::Stratagem,
+        sources,
+        recognizer.ui_scale(),
+        &opened_list,
+    )?;
+    let item_ids = templates
+        .iter()
+        .map(|template| template.path.clone())
+        .collect::<Vec<_>>();
     select_items_from_open_list(
-        runtime,
+        PageNavigator::new(recognizer, ItemKind::Stratagem, classifier),
         automation,
         events,
-        items,
-        ItemKind::Stratagem,
+        &item_ids,
         opened_list,
         apply_in_saved_order,
     )
 }
 
 pub fn apply_booster_from_home(
-    runtime: &RecognizerRuntime,
+    recognizer: RecognizerSession,
     automation: &mut AutomationSession<'_>,
     events: &AppEventSink,
-    items: &[String],
-) -> Result<()> {
-    if items.len() != 1 {
-        bail!(
-            "booster preset application requires exactly 1 booster, got {}",
-            items.len()
-        );
-    }
-
-    let target = wait_for_home_booster_target(automation, runtime)?;
-    let opened_list = open_slot_list(automation, runtime, target)?;
+    home: &RoiObservation,
+    presets_path: &Path,
+    template: &LocalTemplate,
+) -> Result<RoiObservation> {
+    let target = home_booster_target(home)?;
+    let opened_list = open_slot_list(automation, recognizer, target)?;
+    let source = load_template_sample(presets_path, template)?;
+    let classifier = TemplateClassifier::new(
+        ItemKind::Booster,
+        vec![(template.path.clone(), source)],
+        recognizer.ui_scale(),
+        &opened_list,
+    )?;
     select_items_from_open_list(
-        runtime,
+        PageNavigator::new(recognizer, ItemKind::Booster, classifier),
         automation,
         events,
-        items,
-        ItemKind::Booster,
+        std::slice::from_ref(&template.path),
         opened_list,
         true,
     )
 }
 
 fn select_items_from_open_list(
-    runtime: &RecognizerRuntime,
+    navigator: PageNavigator,
     automation: &mut AutomationSession<'_>,
     events: &AppEventSink,
     items: &[String],
-    item_kind: ItemKind,
     initial_observation: RoiObservation,
     apply_in_saved_order: bool,
-) -> Result<()> {
+) -> Result<RoiObservation> {
+    let item_kind = navigator.item_kind();
     let span = info_span!(
         "preset_list_selection",
         item_kind = %item_kind.label(),
@@ -134,18 +159,17 @@ fn select_items_from_open_list(
         requested_items: items.len(),
     });
 
-    let navigator = PageNavigator::new(runtime, item_kind);
-    let mut hover_verifier = HoverVerifier;
     let mut remaining = items.to_vec();
     let mut wheel_attempts = 0u32;
     let mut boundary_candidate = None;
+    let mut full_scan_complete = false;
 
     let mut current_page = {
         let span = debug_span!("scan_page", wheel_attempts);
         let _guard = span.enter();
         navigator.prepare_direct_page(initial_observation)?
     };
-    let mut list_map = ListMap::new(&current_page.roi, item_kind);
+    let mut list_map = ListMap::new(&current_page, item_kind);
 
     loop {
         let page_span = debug_span!(
@@ -157,63 +181,89 @@ fn select_items_from_open_list(
         let _page_guard = page_span.enter();
         let target = if apply_in_saved_order {
             find_visible_target(&current_page.roi, &remaining[0], item_kind)
+                .filter(|target| !list_map.is_selected_slot(&target.slot))
+                .or_else(|| {
+                    list_map
+                        .visible_mapped_target(&remaining[0], &current_page.roi)
+                        .map(DirectClickTarget::from_fallback)
+                })
         } else {
-            next_visible_target(&current_page.roi, &remaining, item_kind)
+            next_visible_target(&current_page.roi, &remaining, item_kind, |slot| {
+                !list_map.is_selected_slot(slot)
+            })
+            .or_else(|| {
+                remaining.iter().find_map(|item_id| {
+                    list_map
+                        .visible_mapped_target(item_id, &current_page.roi)
+                        .map(DirectClickTarget::from_fallback)
+                })
+            })
         };
         if let Some(target) = target {
+            #[cfg(feature = "diagnostics")]
+            if target.fallback {
+                crate::vision::save_fallback_slot(
+                    &current_page.roi.image,
+                    &target.slot,
+                    &target.item_id,
+                    1.0 - f64::from(target.match_score),
+                )?;
+            }
             let span = debug_span!("select_visible_item", item_id = %target.item_id);
             let _guard = span.enter();
             let selected_item_id = target.item_id.clone();
+            let selected_slot = target.slot.clone();
             let final_requested_item = remaining.len() == 1;
             let outcome = select_preset_target(
                 automation,
                 &navigator,
+                &list_map,
                 target,
+                &current_page.roi.slots,
                 item_kind,
-                &mut hover_verifier,
                 final_requested_item,
             )?;
-            events.emit(AppEvent::ItemSelected {
-                item_id: selected_item_id.clone(),
-            });
+            events.emit(AppEvent::ItemSelected);
             remaining.retain(|item_id| item_id != &selected_item_id);
+            list_map.mark_selected(&selected_slot);
             match outcome {
-                TargetSelectionOutcome::List {
-                    page,
-                    viewport_repositioned,
-                } => {
-                    if !list_map.relocalize(&page.roi, item_kind) {
-                        if viewport_repositioned {
-                            bail!(
-                                "target item {selected_item_id} changed the viewport without a shared landmark for the temporary list map"
-                            );
-                        }
-                        list_map.record_current(&page.roi, item_kind);
-                    }
+                TargetSelectionOutcome::List { page, placement } => {
+                    list_map.commit_after_click(&page, placement);
                     current_page = page;
                     wheel_attempts = 0;
                     boundary_candidate = None;
                     debug!(
                         item_id = %selected_item_id,
                         remaining_items = remaining.len(),
-                        viewport_repositioned,
+                        row_delta = placement.row_delta(),
+                        vertical_shift = placement.vertical_shift,
                         "single-item selection confirmed"
                     );
                     continue;
                 }
-                TargetSelectionOutcome::Home => {
+                TargetSelectionOutcome::Home(home) => {
                     debug!(
                         item_id = %selected_item_id,
                         remaining_items = remaining.len(),
                         "final item selection confirmed after returning home"
                     );
                     debug_assert!(remaining.is_empty());
-                    return Ok(());
+                    return Ok(home);
                 }
             }
         }
 
         let item_id = &remaining[0];
+        if full_scan_complete
+            && !list_map.contains_item(item_id)
+            && let Some(score) = list_map.activate_best_candidate(item_id)
+        {
+            warn!(
+                item_id,
+                score, "using the best accumulated slot from the completed list scan"
+            );
+            continue;
+        }
         if wheel_attempts >= MAX_WHEEL_INPUTS {
             bail!(
                 "{} preset item {item_id} not found after {} wheel inputs",
@@ -222,10 +272,9 @@ fn select_items_from_open_list(
             );
         }
 
-        let hint = list_map.navigation_hint(item_id, &current_page.roi, item_kind);
-        let (direction, recenter) = match hint {
-            NavigationHint::Scroll(direction) => (direction, false),
-            NavigationHint::Recenter(direction) => (direction, true),
+        let hint = list_map.navigation_hint(item_id, &current_page.roi);
+        let direction = match hint {
+            NavigationHint::Scroll(direction) => direction,
             NavigationHint::ExpectedVisible => {
                 bail!(
                     "mapped target item {item_id} was not recognized in its expected visible row"
@@ -234,8 +283,8 @@ fn select_items_from_open_list(
         };
         let span = debug_span!("turn_page");
         let _guard = span.enter();
-        let input = if recenter || boundary_candidate == Some(direction) {
-            PageTurnInput::Probe(direction)
+        let input = if boundary_candidate == Some(direction) {
+            PageTurnInput::Nudge(direction)
         } else {
             PageTurnInput::Full(direction)
         };
@@ -248,41 +297,79 @@ fn select_items_from_open_list(
             wheel_attempt,
         )? {
             PageTurnResult::Moved { page, short } => {
-                list_map.advance(&current_page.roi, &page.roi, item_kind, direction);
-                current_page = page;
                 wheel_attempts = wheel_attempt;
-                boundary_candidate = (input.is_full() && short).then_some(direction);
-                if boundary_candidate.is_some() {
-                    debug!(
-                        remaining_items = remaining.len(),
-                        ?direction,
-                        "short page turn accepted; list boundary will be probed after processing this page"
-                    );
-                } else if input.is_probe() {
-                    debug!(
-                        remaining_items = remaining.len(),
-                        ?direction,
-                        "probe moved the viewport; normal page turns will resume"
+                if list_map.advance(&page, input) {
+                    current_page = page;
+                    boundary_candidate = (input.is_full() && short).then_some(direction);
+                    if boundary_candidate.is_some() {
+                        debug!(
+                            remaining_items = remaining.len(),
+                            ?direction,
+                            "short page turn accepted; list boundary will be nudged after processing this page"
+                        );
+                    } else if input.is_nudge() {
+                        debug!(
+                            remaining_items = remaining.len(),
+                            ?direction,
+                            "nudge moved the viewport; normal page turns will resume"
+                        );
+                    }
+                    continue;
+                }
+
+                let recovery = PageTurnInput::Nudge(direction.opposite());
+                warn!(
+                    ?direction,
+                    "moved page could not be placed in the temporary list map; nudging back once"
+                );
+                let recovered = match navigator.perform_confirmed_semantic_page_turn(
+                    automation,
+                    &page,
+                    recovery,
+                    wheel_attempt,
+                )? {
+                    PageTurnResult::Moved { page, .. } => page,
+                    PageTurnResult::NoMovement(_) => {
+                        bail!(
+                            "page turn could not be placed in the temporary list map, and the recovery nudge produced no movement"
+                        );
+                    }
+                };
+                if !list_map.advance(&recovered, recovery) {
+                    bail!(
+                        "neither the page turn nor the page after a recovery nudge could be placed in the temporary list map"
                     );
                 }
+                current_page = recovered;
+                boundary_candidate = Some(direction);
+                debug!(
+                    remaining_items = remaining.len(),
+                    ?direction,
+                    "temporary list map recovered; the next forward turn will use a nudge"
+                );
             }
             PageTurnResult::NoMovement(last_page) => {
-                list_map.record_current(&last_page.roi, item_kind);
+                list_map.record_page(&last_page);
                 current_page = last_page;
                 wheel_attempts = wheel_attempt;
-                if input.is_probe() {
-                    let reason = if recenter {
-                        "could not be recognized after recentering"
-                    } else {
-                        "was not found"
-                    };
+                if input.is_nudge() {
+                    full_scan_complete |= direction == ScrollDirection::Down;
+                    if let Some(score) = list_map.activate_best_candidate(item_id) {
+                        warn!(
+                            item_id,
+                            score,
+                            "no candidate passed the threshold; using the best observed slot"
+                        );
+                        boundary_candidate = None;
+                        continue;
+                    }
                     debug!(
                         remaining_items = remaining.len(),
                         ?direction,
                         "list boundary confirmed by a conservative probe"
                     );
                     bail!(
-                        "target item {item_id} {reason} before the {} of the {} list",
+                        "target item {item_id} was not found before the {} of the {} list",
                         direction.boundary_label(),
                         item_kind.label(),
                     );
@@ -291,27 +378,29 @@ fn select_items_from_open_list(
                 debug!(
                     remaining_items = remaining.len(),
                     ?direction,
-                    "full page turn produced no movement; scheduling a small boundary probe"
+                    "full page turn produced no movement; scheduling a small boundary nudge"
                 );
             }
         }
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum TargetSelectionOutcome {
     List {
         page: PageSnapshot,
-        viewport_repositioned: bool,
+        placement: PostClickPlacement,
     },
-    Home,
+    Home(RoiObservation),
 }
 
 fn select_preset_target(
     automation: &mut AutomationSession<'_>,
-    navigator: &PageNavigator<'_>,
+    navigator: &PageNavigator,
+    list_map: &ListMap,
     initial_target: DirectClickTarget,
+    current_slots: &[Slot],
     item_kind: ItemKind,
-    hover_verifier: &mut HoverVerifier,
     final_requested_item: bool,
 ) -> Result<TargetSelectionOutcome> {
     let item_id = initial_target.item_id.clone();
@@ -321,12 +410,11 @@ fn select_preset_target(
         &item_id,
         item_kind,
         initial_target,
-        hover_verifier,
+        current_slots,
     )?;
     let mut target = prepared.target;
     let before = prepared.sample;
     let mut before_slots = prepared.page_slots;
-    let mut viewport_repositioned = prepared.viewport_repositioned;
     let mut last_after_score = None;
 
     for attempt in 1..=MAX_TARGET_CLICK_ATTEMPTS {
@@ -345,9 +433,17 @@ fn select_preset_target(
 
         automation.click_current(CLICK_HOLD_MS)?;
         if final_requested_item {
-            if wait_for_terminal_home(automation, navigator, item_kind, POST_CLICK_CONFIRM_TIMEOUT)?
-            {
-                return Ok(TargetSelectionOutcome::Home);
+            if let Some(home) = wait_for_stable_ui_state(
+                automation,
+                navigator.recognizer(),
+                UiState::HomeFilled,
+                POST_CLICK_CONFIRM_TIMEOUT,
+            )? {
+                debug!(
+                    item_kind = %item_kind.label(),
+                    "terminal item selection returned to the loadout home"
+                );
+                return Ok(TargetSelectionOutcome::Home(home));
             }
 
             if let Some(retry_target) = unchanged_terminal_target(
@@ -362,8 +458,17 @@ fn select_preset_target(
                 continue;
             }
 
-            if wait_for_terminal_home(automation, navigator, item_kind, TERMINAL_SETTLE_TIMEOUT)? {
-                return Ok(TargetSelectionOutcome::Home);
+            if let Some(home) = wait_for_stable_ui_state(
+                automation,
+                navigator.recognizer(),
+                UiState::HomeFilled,
+                TERMINAL_SETTLE_TIMEOUT,
+            )? {
+                debug!(
+                    item_kind = %item_kind.label(),
+                    "terminal item selection returned to the loadout home after settling"
+                );
+                return Ok(TargetSelectionOutcome::Home(home));
             }
             bail!(
                 "final {} click changed the list state but did not return to a confirmed loadout home",
@@ -371,19 +476,23 @@ fn select_preset_target(
             );
         }
 
-        match observe_post_click_state(automation, navigator, &target, &before, &before_slots)? {
-            PostClickObservation::Selected { page, moved } => {
-                viewport_repositioned |= moved;
+        match observe_post_click_state(
+            automation,
+            navigator,
+            list_map,
+            &target,
+            &before,
+            &before_slots,
+        )? {
+            PostClickObservation::Selected { page, placement } => {
                 debug!(
                     item_id = %item_id,
                     attempt,
-                    viewport_repositioned,
+                    row_delta = placement.row_delta(),
+                    vertical_shift = placement.vertical_shift,
                     "preset item selected state confirmed"
                 );
-                return Ok(TargetSelectionOutcome::List {
-                    page,
-                    viewport_repositioned,
-                });
+                return Ok(TargetSelectionOutcome::List { page, placement });
             }
             PostClickObservation::Unchanged {
                 slot,
@@ -418,7 +527,7 @@ fn select_preset_target(
 enum PostClickObservation {
     Selected {
         page: PageSnapshot,
-        moved: bool,
+        placement: PostClickPlacement,
     },
     Unchanged {
         slot: Slot,
@@ -429,7 +538,8 @@ enum PostClickObservation {
 
 fn observe_post_click_state(
     automation: &mut AutomationSession<'_>,
-    navigator: &PageNavigator<'_>,
+    navigator: &PageNavigator,
+    list_map: &ListMap,
     clicked_target: &DirectClickTarget,
     before: &HoverSample,
     before_slots: &[Slot],
@@ -447,33 +557,53 @@ fn observe_post_click_state(
         observation += 1;
         let image = automation.capture()?;
         let page = navigator.scan_direct_page(image)?;
-        let vertical_shift = common_identity_vertical_shift(before_slots, &page.roi, item_kind);
-        let moved =
-            vertical_shift.is_some_and(|shift| shift.abs() > TARGET_POSITION_TOLERANCE as f32);
-        if moved {
-            debug!(
-                item_id,
-                observation,
-                vertical_shift,
-                "post-click success confirmed by vertical viewport movement"
-            );
-            return Ok(PostClickObservation::Selected { page, moved: true });
-        }
 
-        let Some(slot) = track_post_click_slot(
-            &page,
-            item_kind,
-            clicked_target,
-            vertical_shift.unwrap_or(0.0),
-        ) else {
+        let Some(placement) =
+            list_map.locate_after_click(before_slots, &page, &clicked_target.slot)
+        else {
             debug!(
                 item_id,
-                observation, "post-click target row cannot be tracked; observing another frame"
+                observation, "post-click page could not be located in the temporary list map"
             );
             if started.elapsed() >= POST_CLICK_CONFIRM_TIMEOUT
                 && observation >= POST_CLICK_MIN_OBSERVATIONS
             {
-                bail!("target item {item_id} could not be tracked after clicking");
+                bail!(
+                    "target item {item_id} could not be confirmed because the post-click page could not be located"
+                );
+            }
+            continue;
+        };
+
+        if placement.vertical_shift.abs() > TARGET_POSITION_TOLERANCE as f32 {
+            debug!(
+                item_id,
+                observation,
+                row_delta = placement.row_delta(),
+                vertical_shift = placement.vertical_shift,
+                "post-click success confirmed by viewport movement"
+            );
+            return Ok(PostClickObservation::Selected { page, placement });
+        }
+
+        let target_row = clicked_target.slot.row as i32 - placement.row_delta();
+        let slot = page.roi.slots.iter().find(|slot| {
+            slot.kind.is_selectable_item_for(item_kind)
+                && slot.row as i32 == target_row
+                && slot.col == clicked_target.slot.col
+        });
+
+        let Some(slot) = slot.cloned() else {
+            debug!(
+                item_id,
+                observation,
+                row_delta = placement.row_delta(),
+                "post-click target slot is absent after map placement"
+            );
+            if started.elapsed() >= POST_CLICK_CONFIRM_TIMEOUT
+                && observation >= POST_CLICK_MIN_OBSERVATIONS
+            {
+                bail!("target item {item_id} could not be located after clicking");
             }
             continue;
         };
@@ -489,7 +619,7 @@ fn observe_post_click_state(
                 after_score = sample.target_score(),
                 "post-click success confirmed by brightness drop"
             );
-            return Ok(PostClickObservation::Selected { page, moved: false });
+            return Ok(PostClickObservation::Selected { page, placement });
         }
 
         if started.elapsed() >= POST_CLICK_CONFIRM_TIMEOUT
@@ -511,79 +641,61 @@ fn observe_post_click_state(
     }
 }
 
-fn track_post_click_slot(
-    current_page: &PageSnapshot,
-    item_kind: ItemKind,
-    clicked_target: &DirectClickTarget,
-    vertical_shift: f32,
-) -> Option<Slot> {
-    if let Some(target) = find_visible_target(&current_page.roi, &clicked_target.item_id, item_kind)
-    {
-        return Some(target.slot);
-    }
-
-    let predicted_y = clicked_target.slot.center_f32().1 + vertical_shift;
-    let slot = current_page
-        .roi
-        .slots
-        .iter()
-        .filter(|slot| {
-            slot.kind.is_selectable_item_for(item_kind) && slot.col == clicked_target.slot.col
-        })
-        .map(|slot| (slot, (slot.center_f32().1 - predicted_y).abs()))
-        .min_by(|left, right| left.1.total_cmp(&right.1))?;
-    (slot.1 <= POST_CLICK_ROW_SNAP_TOLERANCE).then(|| slot.0.clone())
-}
-
 struct PreparedHover {
     target: DirectClickTarget,
     sample: HoverSample,
     page_slots: Vec<Slot>,
-    viewport_repositioned: bool,
 }
 
 fn relocate_and_wait_hover(
     automation: &mut AutomationSession<'_>,
-    navigator: &PageNavigator<'_>,
+    navigator: &PageNavigator,
     item_id: &str,
     item_kind: ItemKind,
     mut target: DirectClickTarget,
-    hover_verifier: &mut HoverVerifier,
+    current_slots: &[Slot],
 ) -> Result<PreparedHover> {
-    let mut viewport_repositioned = false;
+    automation.move_cursor(target.slot.center())?;
+    match HoverVerifier::wait_at_current_position(automation, current_slots, &target.slot) {
+        Ok(sample) => {
+            return Ok(PreparedHover {
+                target,
+                sample,
+                page_slots: current_slots.to_vec(),
+            });
+        }
+        Err(error) => {
+            debug!(
+                item_id,
+                error = %error,
+                "hover confirmation failed at the known position; rescanning target"
+            );
+        }
+    }
+
     let mut last_hover_error = None;
-
-    for relocation in 1..=MAX_HOVER_RELOCATIONS {
-        automation.move_cursor(target.slot.center())?;
-
+    for attempt in 2..=MAX_HOVER_ATTEMPTS {
         let image = automation.capture()?;
         let page = navigator.scan_direct_page(image)?;
-        let relocated_target = find_visible_target(&page.roi, item_id, item_kind).with_context(|| {
-            format!(
-                "target item {item_id} left the visible viewport while relocating its hover position"
-            )
-        })?;
+        let relocated_target = find_scored_target(&page, item_id, item_kind, &target)
+            .with_context(|| {
+                format!(
+                    "target item {item_id} left the visible viewport while relocating its hover position"
+                )
+            })?;
         let moved = target.slot.x.abs_diff(relocated_target.slot.x) > TARGET_POSITION_TOLERANCE
             || target.slot.y.abs_diff(relocated_target.slot.y) > TARGET_POSITION_TOLERANCE;
-        viewport_repositioned |= moved;
-
         if moved {
             let (old_x, old_y) = target.slot.center();
             let (new_x, new_y) = relocated_target.slot.center();
             debug!(
                 item_id,
-                relocation,
-                old_x,
-                old_y,
-                new_x,
-                new_y,
-                "target moved after cursor placement; relocating again"
+                attempt, old_x, old_y, new_x, new_y, "target position changed; relocating cursor"
             );
-            target = relocated_target;
-            continue;
         }
+        automation.move_cursor(relocated_target.slot.center())?;
 
-        match hover_verifier.wait_at_current_position(
+        match HoverVerifier::wait_at_current_position(
             automation,
             &page.roi.slots,
             &relocated_target.slot,
@@ -593,13 +705,12 @@ fn relocate_and_wait_hover(
                     target: relocated_target,
                     sample,
                     page_slots: page.roi.slots,
-                    viewport_repositioned,
                 });
             }
             Err(error) => {
                 debug!(
                     item_id,
-                    relocation,
+                    attempt,
                     error = %error,
                     "hover confirmation failed; rescanning and relocating target"
                 );
@@ -613,13 +724,13 @@ fn relocate_and_wait_hover(
         .map(|error| format!(": {error:#}"))
         .unwrap_or_default();
     bail!(
-        "target item {item_id} did not stabilize under the cursor after {MAX_HOVER_RELOCATIONS} relocations{suffix}"
+        "target item {item_id} was not confirmed under the cursor after {MAX_HOVER_ATTEMPTS} attempts{suffix}"
     )
 }
 
 fn unchanged_terminal_target(
     automation: &mut AutomationSession<'_>,
-    navigator: &PageNavigator<'_>,
+    navigator: &PageNavigator,
     item_id: &str,
     item_kind: ItemKind,
     clicked_target: &DirectClickTarget,
@@ -629,7 +740,7 @@ fn unchanged_terminal_target(
     let Ok(page) = navigator.scan_direct_page(image) else {
         return Ok(None);
     };
-    let Some(target) = find_visible_target(&page.roi, item_id, item_kind) else {
+    let Some(target) = find_scored_target(&page, item_id, item_kind, clicked_target) else {
         return Ok(None);
     };
     let moved = clicked_target.slot.x.abs_diff(target.slot.x) > TARGET_POSITION_TOLERANCE
@@ -652,27 +763,23 @@ fn unchanged_terminal_target(
     Ok(Some(target))
 }
 
-fn wait_for_terminal_home(
-    automation: &mut AutomationSession<'_>,
-    navigator: &PageNavigator<'_>,
+fn find_scored_target(
+    page: &PageSnapshot,
+    item_id: &str,
     item_kind: ItemKind,
-    timeout: Duration,
-) -> Result<bool> {
-    let started = Instant::now();
-    loop {
-        let image = automation.capture()?;
-        if let Ok(home) = navigator.detect_home(image)
-            && detect_ui_state(&home) == UiState::HomeFilled
-        {
-            debug!(
-                item_kind = %item_kind.label(),
-                elapsed = ?started.elapsed(),
-                "terminal item selection returned to the loadout home"
-            );
-            return Ok(true);
-        }
-        if started.elapsed() >= timeout {
-            return Ok(false);
-        }
+    previous: &DirectClickTarget,
+) -> Option<DirectClickTarget> {
+    if !previous.fallback {
+        return find_visible_target(&page.roi, item_id, item_kind);
     }
+
+    let slot = page.roi.slots.iter().find(|slot| {
+        slot.kind.is_selectable_item_for(item_kind)
+            && slot.row == previous.slot.row
+            && slot.col == previous.slot.col
+    })?;
+    Some(DirectClickTarget {
+        slot: slot.clone(),
+        ..previous.clone()
+    })
 }

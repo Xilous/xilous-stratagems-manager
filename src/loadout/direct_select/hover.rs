@@ -8,8 +8,6 @@ use crate::automation::AutomationSession;
 use crate::vision::{Slot, luma601_u8};
 
 const HOVER_TIMEOUT: Duration = Duration::from_millis(700);
-const HOVER_STABLE_DURATION: Duration = Duration::from_millis(15);
-const HOVER_STABLE_SCORE_DELTA: f32 = 3.0;
 const CHROMA_PENALTY: f32 = 0.75;
 
 const HOVER_MIN_SCORE_GAP: f32 = 24.0;
@@ -66,18 +64,15 @@ impl HoverVerifier {
     }
 
     pub(super) fn wait_at_current_position(
-        &mut self,
         automation: &mut AutomationSession<'_>,
         slots: &[Slot],
         target: &Slot,
     ) -> Result<HoverSample> {
         let started = Instant::now();
-        let mut stable_since = None;
-        let mut previous_score = None;
 
         loop {
             let image = automation.capture()?;
-            let sample = self.evaluate(&image, slots, target)?;
+            let sample = Self::evaluate(&image, slots, target)?;
 
             trace!(
                 target_row = target.row,
@@ -92,32 +87,17 @@ impl HoverVerifier {
             );
 
             if sample.confirmed() {
-                let score_is_stable = previous_score.is_some_and(|previous: f32| {
-                    (previous - sample.target_score).abs() <= HOVER_STABLE_SCORE_DELTA
-                });
-                if score_is_stable {
-                    if stable_since
-                        .is_some_and(|since: Instant| since.elapsed() >= HOVER_STABLE_DURATION)
-                    {
-                        debug!(
-                            target_row = target.row,
-                            target_col = target.col,
-                            target_score = sample.target_score,
-                            baseline = sample.baseline,
-                            score_gap = sample.target_score - sample.baseline,
-                            required_gap = sample.required_gap,
-                            elapsed = ?started.elapsed(),
-                            "target hover state confirmed"
-                        );
-                        return Ok(sample.sample());
-                    }
-                } else {
-                    stable_since = Some(Instant::now());
-                }
-                previous_score = Some(sample.target_score);
-            } else {
-                stable_since = None;
-                previous_score = None;
+                debug!(
+                    target_row = target.row,
+                    target_col = target.col,
+                    target_score = sample.target_score,
+                    baseline = sample.baseline,
+                    score_gap = sample.target_score - sample.baseline,
+                    required_gap = sample.required_gap,
+                    elapsed = ?started.elapsed(),
+                    "target hover state confirmed"
+                );
+                return Ok(sample.sample());
             }
 
             if started.elapsed() >= HOVER_TIMEOUT {
@@ -135,12 +115,7 @@ impl HoverVerifier {
         }
     }
 
-    fn evaluate(
-        &mut self,
-        image: &RgbaImage,
-        slots: &[Slot],
-        target: &Slot,
-    ) -> Result<HoverEvidence> {
+    fn evaluate(image: &RgbaImage, slots: &[Slot], target: &Slot) -> Result<HoverEvidence> {
         let mut scored = Vec::with_capacity(slots.len());
         for slot in slots {
             scored.push((slot, border_center_line_score(image, slot)?));
@@ -192,7 +167,12 @@ fn border_center_line_score(image: &RgbaImage, slot: &Slot) -> Result<f32> {
     }
     let right = slot.x.saturating_add(slot.w);
     let bottom = slot.y.saturating_add(slot.h);
-    if right >= image.width() || bottom >= image.height() {
+    let band_half = ((slot.w as f32 / 78.0).ceil() as u32).max(1);
+    if slot.x < band_half
+        || slot.y < band_half
+        || right.saturating_add(band_half) > image.width()
+        || bottom.saturating_add(band_half) > image.height()
+    {
         bail!(
             "slot border ({},{})-({},{}) lies outside ROI image {}x{}",
             slot.x,
@@ -204,14 +184,27 @@ fn border_center_line_score(image: &RgbaImage, slot: &Slot) -> Result<f32> {
         );
     }
 
-    let mut values = Vec::with_capacity((2 * slot.w + 2 * slot.h) as usize);
+    let mut values =
+        Vec::with_capacity(((2 * slot.w + 2 * slot.h).saturating_mul(2 * band_half)) as usize);
     for x in slot.x..right {
-        values.push(white_response(image.get_pixel(x, slot.y).0));
-        values.push(white_response(image.get_pixel(x, bottom).0));
+        for offset in 0..2 * band_half {
+            values.push(white_response(
+                image.get_pixel(x, slot.y - band_half + offset).0,
+            ));
+            values.push(white_response(
+                image.get_pixel(x, bottom - band_half + offset).0,
+            ));
+        }
     }
     for y in slot.y..bottom {
-        values.push(white_response(image.get_pixel(slot.x, y).0));
-        values.push(white_response(image.get_pixel(right, y).0));
+        for offset in 0..2 * band_half {
+            values.push(white_response(
+                image.get_pixel(slot.x - band_half + offset, y).0,
+            ));
+            values.push(white_response(
+                image.get_pixel(right - band_half + offset, y).0,
+            ));
+        }
     }
     Ok(upper_tertile(&values))
 }

@@ -1,22 +1,39 @@
 use crate::item::ItemKind;
-use crate::vision::{RoiObservation, Slot};
+use crate::vision::{RoiObservation, Slot, TemplateMatchCandidate};
 
+#[derive(Clone)]
 pub(super) struct DirectClickTarget {
     pub(super) item_id: String,
     pub(super) match_score: f32,
     pub(super) match_margin: f32,
     pub(super) gate_quality: f32,
     pub(super) slot: Slot,
+    pub(super) fallback: bool,
+}
+
+impl DirectClickTarget {
+    pub(super) fn from_fallback(candidate: TemplateMatchCandidate) -> Self {
+        Self {
+            item_id: candidate.item_id,
+            match_score: (1.0 - candidate.score).clamp(0.0, 1.0) as f32,
+            match_margin: candidate.match_margin,
+            gate_quality: candidate.gate_quality,
+            slot: candidate.slot,
+            fallback: true,
+        }
+    }
 }
 
 pub(super) fn next_visible_target(
     result: &RoiObservation,
     remaining: &[String],
     item_kind: ItemKind,
+    mut is_available: impl FnMut(&Slot) -> bool,
 ) -> Option<DirectClickTarget> {
     remaining
         .iter()
         .filter_map(|item_id| find_visible_target(result, item_id, item_kind))
+        .filter(|target| is_available(&target.slot))
         .min_by(compare_center_then_x)
 }
 
@@ -42,6 +59,7 @@ pub(super) fn find_visible_target(
                 match_margin: classification.match_margin,
                 gate_quality: classification.gate_quality,
                 slot: slot.clone(),
+                fallback: false,
             })
         })
         .max_by(|left, right| {

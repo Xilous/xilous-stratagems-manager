@@ -4,6 +4,8 @@ mod app_events;
 mod assets;
 mod automation;
 mod capture;
+mod color_normalization;
+mod game_settings;
 mod game_window;
 mod image_rect;
 mod input;
@@ -22,7 +24,6 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -41,8 +42,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::PCWSTR;
 
 use crate::app_events::{AppEvent, AppEventSink, OverlayPreset, OverlayPresetStatus};
-use crate::assets::IconCatalog;
 use crate::capture::CaptureSessionManager;
+use crate::color_normalization::ColorNormalizer;
+use crate::game_settings::read_color_settings;
 use crate::loadout::bind_loadout_region;
 use crate::preset::{Preset, invalid_preset_reason, load_presets, validate_preset};
 use crate::preset_action::{
@@ -54,6 +56,8 @@ use crate::vision::RecognizerRuntime;
 const DEFAULT_CONFIG_TOML: &str = include_str!("../data/config.toml");
 const CONFIG_RELATIVE_PATH: &str = "data/config.toml";
 const LOG_RELATIVE_PATH: &str = "data/app.log";
+#[cfg(feature = "diagnostics")]
+const DIAGNOSTIC_SCORES_RELATIVE_PATH: &str = "data/diagnostics/matcher-scores.jsonl";
 const PRESETS_RELATIVE_PATH: &str = "data/presets.json";
 const LAST_FAILURE_DEBUG_PATH: &str = "data/debug/last_failure";
 const MAX_PRESET_HOTKEYS: usize = 12;
@@ -128,6 +132,8 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let log_path = app_path(LOG_RELATIVE_PATH)?;
     let _log_guard = init_tracing(&log_path)?;
+    #[cfg(feature = "diagnostics")]
+    vision::init_diagnostics(&app_path(DIAGNOSTIC_SCORES_RELATIVE_PATH)?)?;
     let config_path = app_path(CONFIG_RELATIVE_PATH)?;
     let presets_path = app_path(PRESETS_RELATIVE_PATH)?;
     let result = load_app_config(&config_path).and_then(|(config, notify_reset)| {
@@ -168,13 +174,8 @@ fn run_preset_hotkey_mode(
         )
     })?;
     let events = if config.overlay.enabled {
-        let presets = overlay_presets_for_bindings(
-            presets_path,
-            &bindings,
-            &config.presets.labels,
-            runtime.icon_catalog().as_ref(),
-        );
-        let events = overlay::start(hotkey_modifiers, Arc::clone(runtime.icon_catalog()))?;
+        let presets = overlay_presets_for_bindings(presets_path, &bindings, &config.presets.labels);
+        let events = overlay::start(hotkey_modifiers, presets_path)?;
         events.emit(AppEvent::PresetListUpdated { presets });
         events
     } else {
@@ -371,8 +372,10 @@ fn save_last_failure(
         let Some(capture) = capture_session.active_capture() else {
             return Ok(None);
         };
-        let mut region = bind_loadout_region(capture, runtime.calibration())?;
-        let image = region.capture()?;
+        let normalizer =
+            ColorNormalizer::new(read_color_settings()?, capture.display_color_info())?;
+        let mut region = bind_loadout_region(capture, runtime.calibration())?.region;
+        let image = region.capture(&normalizer)?;
         let directory = app_path(LAST_FAILURE_DEBUG_PATH)?;
         fs::create_dir_all(&directory).with_context(|| {
             format!(
@@ -498,7 +501,6 @@ fn overlay_presets_for_bindings(
     presets_path: &Path,
     bindings: &[PresetHotkeyBinding],
     labels: &BTreeMap<String, String>,
-    catalog: &IconCatalog,
 ) -> Vec<OverlayPreset> {
     let presets = match load_presets(presets_path) {
         Ok(presets) => presets,
@@ -540,7 +542,7 @@ fn overlay_presets_for_bindings(
                 return overlay_preset(binding, None, labels, OverlayPresetStatus::Invalid(error));
             }
 
-            let status = invalid_preset_reason(preset, catalog).map_or(
+            let status = invalid_preset_reason(presets_path, preset).map_or(
                 OverlayPresetStatus::Ready,
                 |reason| {
                     warn!(
@@ -565,7 +567,19 @@ fn overlay_preset(
 ) -> OverlayPreset {
     let (stratagems, booster) = preset.map_or_else(
         || (Vec::new(), None),
-        |preset| (preset.stratagems.clone(), preset.booster.clone()),
+        |preset| {
+            (
+                preset
+                    .stratagems
+                    .iter()
+                    .map(|template| template.path.clone())
+                    .collect(),
+                preset
+                    .booster
+                    .as_ref()
+                    .map(|template| template.path.clone()),
+            )
+        },
     );
     OverlayPreset {
         key_label: binding.hotkey.key.name(),
@@ -589,6 +603,11 @@ fn init_tracing(path: &Path) -> Result<WorkerGuard> {
     let file = fs::File::create(path)
         .with_context(|| format!("failed to create log {}", path.display()))?;
     let (writer, guard) = NonBlockingBuilder::default().lossy(false).finish(file);
+    let level = if cfg!(feature = "diagnostics") {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
     let file_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(true)
@@ -597,8 +616,8 @@ fn init_tracing(path: &Path) -> Result<WorkerGuard> {
         .compact()
         .with_filter(
             Targets::new()
-                .with_target(module_path!(), Level::INFO)
-                .with_target("hd2_preset_helper", Level::INFO),
+                .with_target(module_path!(), level)
+                .with_target("hd2_preset_helper", level),
         );
 
     tracing_subscriber::registry().with(file_layer).init();

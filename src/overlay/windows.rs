@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::{MaybeUninit, size_of};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -36,8 +37,9 @@ use windows::core::PCWSTR;
 
 use super::{OverlayEventPolicy, OverlayModel, OverlayTone, compact_error};
 use crate::app_events::{AppEvent, AppEventSink, OverlayPreset, OverlayPresetStatus};
-use crate::assets::{self, IconCatalog};
+use crate::assets;
 use crate::input::HotkeyModifiers;
+use crate::preset::load_template_image;
 
 const OVERLAY_CLASS: &str = "hd2-preset-helper-overlay";
 const APP_EVENT_MESSAGE: u32 = WM_APP + 1;
@@ -72,6 +74,7 @@ const FADE_TICK_MS: u32 = 16;
 
 struct OverlayState {
     model: OverlayModel,
+    presets_path: PathBuf,
     icons: HashMap<String, Option<IconBitmap>>,
     metrics: OverlayMetrics,
 }
@@ -316,9 +319,10 @@ fn centered_y(top: i32, outer_h: i32, inner_h: i32) -> i32 {
 }
 
 impl OverlayState {
-    fn new(catalog: Arc<IconCatalog>) -> Self {
+    fn new(presets_path: PathBuf) -> Self {
         Self {
-            model: OverlayModel::new(catalog),
+            model: OverlayModel::new(),
+            presets_path,
             icons: HashMap::new(),
             metrics: OverlayMetrics::default(),
         }
@@ -335,22 +339,24 @@ impl OverlayState {
 }
 
 impl OverlayContext {
-    fn new(catalog: Arc<IconCatalog>) -> Self {
-        let state = OverlayState::new(catalog);
+    fn new(presets_path: PathBuf) -> Self {
+        let state = OverlayState::new(presets_path);
         let renderer = OverlayRenderer::create(state.metrics);
         Self { state, renderer }
     }
 }
 
-pub(super) fn start(modifiers: HotkeyModifiers, catalog: Arc<IconCatalog>) -> Result<AppEventSink> {
+pub(super) fn start(modifiers: HotkeyModifiers, presets_path: &Path) -> Result<AppEventSink> {
     let (sender, receiver) = mpsc::channel();
     let wake_thread = Arc::new(AtomicU32::new(0));
     let overlay_wake_thread = Arc::clone(&wake_thread);
+    let presets_path = presets_path.to_path_buf();
 
     thread::Builder::new()
         .name("hd2-preset-helper-overlay".to_string())
         .spawn(move || {
-            if let Err(error) = run_overlay(receiver, modifiers, catalog, &overlay_wake_thread) {
+            if let Err(error) = run_overlay(receiver, modifiers, presets_path, &overlay_wake_thread)
+            {
                 warn!(error = %format!("{error:#}"), "overlay thread stopped");
             }
             overlay_wake_thread.store(0, Ordering::Release);
@@ -371,10 +377,10 @@ pub(super) fn start(modifiers: HotkeyModifiers, catalog: Arc<IconCatalog>) -> Re
 fn run_overlay(
     receiver: Receiver<AppEvent>,
     modifiers: HotkeyModifiers,
-    catalog: Arc<IconCatalog>,
+    presets_path: PathBuf,
     wake_thread: &AtomicU32,
 ) -> Result<()> {
-    OVERLAY.with(|overlay| *overlay.borrow_mut() = Some(OverlayContext::new(catalog)));
+    OVERLAY.with(|overlay| *overlay.borrow_mut() = Some(OverlayContext::new(presets_path)));
     let initial_metrics = OverlayMetrics::default();
     let initial_position = overlay_position(initial_metrics);
 
@@ -832,6 +838,7 @@ fn apply_event(event: AppEvent) -> Option<OverlayEventPolicy> {
         let update = state.model.apply(event);
         if update.presets_changed {
             state.metrics = state.metrics.with_preset_count(state.model.presets.len());
+            state.icons.clear();
             warm_preset_icons(state);
         }
         Some(update.policy)
@@ -1178,7 +1185,7 @@ fn warm_preset_icons(state: &mut OverlayState) {
             continue;
         }
 
-        let icon = match render_item_icon(&state.model.catalog, &item_id, state.metrics.icon_size) {
+        let icon = match render_item_icon(&state.presets_path, &item_id, state.metrics.icon_size) {
             Ok(icon) => Some(icon),
             Err(error) => {
                 warn!(item_id, error = %format!("{error:#}"), "failed to render overlay icon");
@@ -1189,12 +1196,9 @@ fn warm_preset_icons(state: &mut OverlayState) {
     }
 }
 
-fn render_item_icon(catalog: &IconCatalog, item_id: &str, icon_size: u32) -> Result<IconBitmap> {
+fn render_item_icon(presets_path: &Path, item_id: &str, icon_size: u32) -> Result<IconBitmap> {
     ensure!(icon_size > 0, "overlay icon size must be non-zero");
-    let entry = catalog
-        .get(item_id)
-        .with_context(|| format!("unknown icon item ID {item_id}"))?;
-    let source = assets::icon_image(&entry.path)?;
+    let source = load_template_image(presets_path, item_id)?;
 
     let (dst_w, dst_h) = fit_inside(source.width(), source.height(), icon_size);
     let resized = assets::resize_rgba_box(&source, dst_w, dst_h)?;

@@ -1,5 +1,11 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+#[cfg(feature = "diagnostics")]
+use std::{
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, Result, bail};
 use image::RgbaImage;
@@ -32,12 +38,13 @@ use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 use windows::core::{IInspectable, Interface, factory};
 
-use half::f16;
-
+use super::super::Rgba16fConverter;
 use crate::image_rect::ImageRect;
 use crate::window::{ClientCrop, WindowTarget};
 
 const WGC_FRAME_POOL_BUFFER_COUNT: i32 = 2;
+#[cfg(feature = "diagnostics")]
+const WGC_F16_DUMP_DIR_ENV: &str = "HD2_PRESET_HELPER_WGC_F16_DUMP_DIR";
 
 pub(super) struct WgcCapture {
     rebuild_signature: CaptureRebuildSignature,
@@ -176,8 +183,10 @@ struct StagingKey {
 struct TextureReadCache {
     staging_texture: Option<ID3D11Texture2D>,
     staging_key: Option<StagingKey>,
-    sdr_white_level: u32,
-    f16_to_sdr_u8_lut: Box<[u8; 65536]>,
+    #[cfg(feature = "diagnostics")]
+    f16_dump_dir: Option<PathBuf>,
+    #[cfg(feature = "diagnostics")]
+    f16_dumped: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +221,7 @@ impl CaptureRebuildSignature {
 }
 
 impl WgcCapture {
-    pub(super) fn new(target: &WindowTarget, sdr_white_level: u32) -> Result<Self> {
+    pub(super) fn new(target: &WindowTarget) -> Result<Self> {
         let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
 
         if !GraphicsCaptureSession::IsSupported().context("failed to query WGC support")? {
@@ -279,13 +288,6 @@ impl WgcCapture {
         session
             .StartCapture()
             .context("failed to start WGC capture")?;
-        let sdr_white_level = sdr_white_level.max(1);
-        debug!(
-            sdr_white_level,
-            scale = 1000.0 / sdr_white_level as f32,
-            "configured WGC HDR to SDR mapping"
-        );
-        let f16_to_sdr_u8_lut = build_f16_to_sdr_u8_lut(sdr_white_level);
         Ok(Self {
             rebuild_signature,
             device,
@@ -301,8 +303,10 @@ impl WgcCapture {
             texture_read: TextureReadCache {
                 staging_texture: None,
                 staging_key: None,
-                sdr_white_level,
-                f16_to_sdr_u8_lut,
+                #[cfg(feature = "diagnostics")]
+                f16_dump_dir: std::env::var_os(WGC_F16_DUMP_DIR_ENV).map(PathBuf::from),
+                #[cfg(feature = "diagnostics")]
+                f16_dumped: false,
             },
         })
     }
@@ -312,11 +316,7 @@ impl WgcCapture {
         unsafe { IsWindow(Some(hwnd)).as_bool() }
     }
 
-    pub(super) fn try_reuse(
-        &mut self,
-        target: &WindowTarget,
-        sdr_white_level: Option<u32>,
-    ) -> bool {
+    pub(super) fn try_reuse(&mut self, target: &WindowTarget) -> bool {
         if !self.is_capture_window_alive()
             || CaptureRebuildSignature::from_window_target(target)
                 .map(|signature| signature != self.rebuild_signature)
@@ -324,34 +324,18 @@ impl WgcCapture {
         {
             return false;
         }
-        if let Some(sdr_white_level) = sdr_white_level {
-            self.update_sdr_white_level(sdr_white_level);
-        }
         true
-    }
-
-    fn update_sdr_white_level(&mut self, sdr_white_level: u32) {
-        let sdr_white_level = sdr_white_level.max(1);
-        let previous = self.texture_read.sdr_white_level;
-        if sdr_white_level == previous {
-            return;
-        }
-
-        self.texture_read.f16_to_sdr_u8_lut = build_f16_to_sdr_u8_lut(sdr_white_level);
-        self.texture_read.sdr_white_level = sdr_white_level;
-        debug!(
-            previous_sdr_white_level = previous,
-            sdr_white_level,
-            scale = 1000.0 / sdr_white_level as f32,
-            "updated WGC HDR to SDR mapping"
-        );
     }
 
     pub(super) fn output_size(&self) -> (u32, u32) {
         (self.client_crop.w, self.client_crop.h)
     }
 
-    pub(super) fn capture_region(&mut self, client_roi: ImageRect) -> Result<RgbaImage> {
+    pub(super) fn capture_region(
+        &mut self,
+        client_roi: ImageRect,
+        converter: &dyn Rgba16fConverter,
+    ) -> Result<RgbaImage> {
         if client_roi.w == 0 || client_roi.h == 0 {
             bail!("cannot capture an empty WGC client region");
         }
@@ -420,7 +404,7 @@ impl WgcCapture {
         drop(state);
 
         let read_start = Instant::now();
-        let read_result = self.read_client_region(&frame, client_roi);
+        let read_result = self.read_client_region(&frame, client_roi, converter);
         let read_elapsed = read_start.elapsed();
         let _ = frame.Close();
         let captured = read_result?;
@@ -450,6 +434,7 @@ impl WgcCapture {
         &mut self,
         frame: &Direct3D11CaptureFrame,
         client_roi: ImageRect,
+        converter: &dyn Rgba16fConverter,
     ) -> Result<RgbaImage> {
         let content_size = frame.ContentSize().unwrap_or(self.item_size);
         let surface = frame.Surface().context("failed to get WGC frame surface")?;
@@ -468,6 +453,7 @@ impl WgcCapture {
             content_size,
             source_region,
             &mut self.texture_read,
+            converter,
         )?;
 
         Ok(image)
@@ -528,6 +514,7 @@ fn read_d3d11_texture_region_to_rgba_cached(
     content_size: SizeInt32,
     region: ImageRect,
     cache: &mut TextureReadCache,
+    converter: &dyn Rgba16fConverter,
 ) -> Result<RgbaImage> {
     let t0 = Instant::now();
 
@@ -631,6 +618,11 @@ fn read_d3d11_texture_region_to_rgba_cached(
 
     let row_pitch = mapped.RowPitch as usize;
     let source = mapped.pData as *const u8;
+    #[cfg(feature = "diagnostics")]
+    let mut f16_dump = (format == DXGI_FORMAT_R16G16B16A16_FLOAT
+        && cache.f16_dump_dir.is_some()
+        && !cache.f16_dumped)
+        .then(|| Vec::with_capacity(width as usize * height as usize * 8));
 
     let t = Instant::now();
     for row in 0..height as usize {
@@ -650,7 +642,11 @@ fn read_d3d11_texture_region_to_rgba_cached(
 
             DXGI_FORMAT_R16G16B16A16_FLOAT => {
                 let row_bytes = unsafe { std::slice::from_raw_parts(row_ptr, width as usize * 8) };
-                read_rgba16f_row_to_rgba8_slice(row_bytes, dst_row, &cache.f16_to_sdr_u8_lut);
+                #[cfg(feature = "diagnostics")]
+                if let Some(dump) = &mut f16_dump {
+                    dump.extend_from_slice(row_bytes);
+                }
+                converter.convert_row(row_bytes, dst_row);
             }
 
             _ => unreachable!(),
@@ -659,6 +655,31 @@ fn read_d3d11_texture_region_to_rgba_cached(
     let t_convert = t.elapsed();
 
     unsafe { context.Unmap(&dst, 0) };
+
+    #[cfg(feature = "diagnostics")]
+    if let Some(data) = f16_dump {
+        cache.f16_dumped = true;
+        let directory = cache
+            .f16_dump_dir
+            .as_deref()
+            .expect("FP16 dump data requires an output directory");
+        match save_rgba16f_npy(
+            directory,
+            region,
+            converter.diagnostic_tag(),
+            width,
+            height,
+            &data,
+        ) {
+            Ok(path) => debug!(
+                path = %path.display(),
+                width,
+                height,
+                "saved raw WGC FP16 frame"
+            ),
+            Err(error) => warn!(error = ?error, "failed to save raw WGC FP16 frame"),
+        }
+    }
 
     let image = RgbaImage::from_raw(width, height, rgba)
         .context("failed to build RGBA image from D3D11 texture")?;
@@ -682,46 +703,46 @@ fn read_d3d11_texture_region_to_rgba_cached(
     Ok(image)
 }
 
-fn read_rgba16f_row_to_rgba8_slice(row_bytes: &[u8], rgba: &mut [u8], lut: &[u8; 65536]) {
-    for (pixel, dst) in row_bytes.chunks_exact(8).zip(rgba.chunks_exact_mut(4)) {
-        let r = u16::from_le_bytes([pixel[0], pixel[1]]);
-        let g = u16::from_le_bytes([pixel[2], pixel[3]]);
-        let b = u16::from_le_bytes([pixel[4], pixel[5]]);
-
-        dst[0] = lut[r as usize];
-        dst[1] = lut[g as usize];
-        dst[2] = lut[b as usize];
-        dst[3] = 255;
-    }
-}
-
-fn linear_to_srgb_u8(x: f32) -> u8 {
-    let x = x.clamp(0.0, 1.0);
-
-    let y = if x <= 0.003_130_8 {
-        12.92 * x
-    } else {
-        1.055 * x.powf(1.0 / 2.4) - 0.055
-    };
-
-    (y * 255.0 + 0.5).clamp(0.0, 255.0) as u8
-}
-
-fn build_f16_to_sdr_u8_lut(sdr_white_level: u32) -> Box<[u8; 65536]> {
-    let sdr_white_level = sdr_white_level.max(1);
-    let scale = 1000.0 / sdr_white_level as f32;
-
-    let mut lut = Box::new([0u8; 65536]);
-
-    for bits in 0u32..=65535 {
-        let x = f16::from_bits(bits as u16).to_f32();
-
-        let y = if x.is_finite() { x * scale } else { 0.0 };
-
-        lut[bits as usize] = linear_to_srgb_u8(y);
+#[cfg(feature = "diagnostics")]
+fn save_rgba16f_npy(
+    directory: &Path,
+    region: ImageRect,
+    diagnostic_tag: &str,
+    width: u32,
+    height: u32,
+    data: &[u8],
+) -> Result<PathBuf> {
+    if data.len() != width as usize * height as usize * 8 {
+        bail!("invalid packed RGBA16F byte count: {}", data.len());
     }
 
-    lut
+    std::fs::create_dir_all(directory)
+        .with_context(|| format!("failed to create {}", directory.display()))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")?
+        .as_millis();
+    let path = directory.join(format!(
+        "wgc-{timestamp}-x{}-y{}-{width}x{height}-{diagnostic_tag}.npy",
+        region.x, region.y,
+    ));
+
+    let mut header =
+        format!("{{'descr': '<f2', 'fortran_order': False, 'shape': ({height}, {width}, 4), }}");
+    let padding = (64 - (10 + header.len() + 1) % 64) % 64;
+    header.extend(std::iter::repeat_n(' ', padding));
+    header.push('\n');
+    let header_len = u16::try_from(header.len()).context("NPY header is too large")?;
+
+    let file = std::fs::File::create(&path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(b"\x93NUMPY\x01\x00")?;
+    writer.write_all(&header_len.to_le_bytes())?;
+    writer.write_all(header.as_bytes())?;
+    writer.write_all(data)?;
+    writer.flush()?;
+    Ok(path)
 }
 
 fn request_wgc_borderless_access() -> bool {

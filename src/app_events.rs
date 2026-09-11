@@ -63,12 +63,9 @@ pub enum AppEvent {
         item_kind: ItemKind,
         requested_items: usize,
     },
-    ItemSelected {
-        item_id: String,
-    },
+    ItemSelected,
     PresetDone {
         preset: String,
-        warning: Option<String>,
     },
     PresetFailed {
         preset: String,

@@ -1,28 +1,41 @@
-mod classifier;
+mod booster;
 mod color;
+#[cfg(feature = "diagnostics")]
+mod diagnostics;
 mod geometry;
+#[cfg(feature = "diagnostics")]
+mod home_tone_diagnostics;
+mod matcher;
 mod recognizer;
+mod semantic_extractor;
+mod template_classifier;
 
 use anyhow::{Result, bail};
 use image::RgbaImage;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::image_rect::ImageRect;
 use crate::item::ItemKind;
 
+pub(crate) use booster::crop_sample as crop_booster_sample;
 pub use color::{icon_likeness, luma601_u8};
-pub use recognizer::RecognizerRuntime;
+#[cfg(feature = "diagnostics")]
+pub use diagnostics::init as init_diagnostics;
+#[cfg(feature = "diagnostics")]
+pub use diagnostics::save_fallback_slot;
+#[cfg(feature = "diagnostics")]
+pub use diagnostics::save_list_map_image;
+#[cfg(feature = "diagnostics")]
+pub(crate) use home_tone_diagnostics::log_home_tone;
+pub use recognizer::{RecognizerRuntime, RecognizerSession};
+pub(crate) use semantic_extractor::slot_core_rect;
+pub use semantic_extractor::{TEMPLATE_PHYSICAL_SIZE_LOGICAL, crop_slot_sample};
+pub use template_classifier::{TemplateClassifier, TemplateMatchCandidate};
 
-const ROI_REFERENCE_W: u32 = 576;
-pub const ROI_REFERENCE_H: u32 = 832;
-const ROI_REFERENCE_W_F32: f32 = 576.0;
-const ROI_REFERENCE_H_F32: f32 = 832.0;
+pub const ROI_REFERENCE_H: u32 = 624;
 
-const SLOT_SIZE_I32: i32 = 104;
-
-const LIST_COLS: [i32; 4] = [77, 190, 304, 417];
-const HOME_COLS: [i32; 4] = [11, 124, 237, 350];
-const HOME_BOOSTER_X: i32 = 457;
+const LIST_COLS: [i32; 4] = [58, 143, 228, 313];
+const HOME_COLS: [i32; 4] = [8, 93, 178, 263];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotKind {
@@ -114,12 +127,27 @@ pub struct RoiObservation {
     pub slots: Vec<Slot>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RoiGeometry {
+    pub scale: f64,
+    pub logical_origin_x: f64,
+    pub logical_origin_y: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedRoi {
+    pub rect: ImageRect,
+    pub geometry: RoiGeometry,
+}
+
 #[derive(Debug, Clone)]
 pub struct Slot {
     pub x: u32,
     pub y: u32,
     pub w: u32,
     pub h: u32,
+    center_x: f32,
+    center_y: f32,
     pub row: u32,
     pub col: u32,
     pub kind: SlotKind,
@@ -128,18 +156,24 @@ pub struct Slot {
 
 impl Slot {
     pub fn center(&self) -> (u32, u32) {
-        (
-            self.x.saturating_add(self.w / 2),
-            self.y.saturating_add(self.h / 2),
-        )
+        (self.center_x.round() as u32, self.center_y.round() as u32)
     }
 
     pub fn center_f32(&self) -> (f32, f32) {
-        (
-            self.x as f32 + self.w as f32 * 0.5,
-            self.y as f32 + self.h as f32 * 0.5,
-        )
+        (self.center_x, self.center_y)
     }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct SampleGeometry {
+    pub center_x: f32,
+    pub center_y: f32,
+    pub physical_size: f32,
+}
+
+pub struct ImageSample {
+    pub image: RgbaImage,
+    pub geometry: SampleGeometry,
 }
 
 #[derive(Debug, Clone)]
@@ -157,7 +191,7 @@ pub fn resolve_calibration_roi_for_size(
     image_w: u32,
     image_h: u32,
     calibration: &Calibration,
-) -> Result<ImageRect> {
+) -> Result<ResolvedRoi> {
     let reference = calibration.reference;
     let rect = calibration.roi_ref;
     if reference.w == 0 || reference.h == 0 {
@@ -183,29 +217,29 @@ pub fn resolve_calibration_roi_for_size(
     }
 
     let scale = match calibration.scale_axis {
-        ScaleAxis::Width => image_w as f32 / reference.w as f32,
-        ScaleAxis::Height => image_h as f32 / reference.h as f32,
+        ScaleAxis::Width => image_w as f64 / reference.w as f64,
+        ScaleAxis::Height => image_h as f64 / reference.h as f64,
         ScaleAxis::Fit => {
-            (image_w as f32 / reference.w as f32).min(image_h as f32 / reference.h as f32)
+            (image_w as f64 / reference.w as f64).min(image_h as f64 / reference.h as f64)
         }
     };
 
-    let scaled_reference_w = reference.w as f32 * scale;
-    let scaled_reference_h = reference.h as f32 * scale;
+    let scaled_reference_w = reference.w as f64 * scale;
+    let scaled_reference_h = reference.h as f64 * scale;
     let (offset_x, offset_y) = match calibration.anchor {
         RoiAnchor::TopLeft => (0.0, 0.0),
-        RoiAnchor::TopCenter => ((image_w as f32 - scaled_reference_w) * 0.5, 0.0),
+        RoiAnchor::TopCenter => ((image_w as f64 - scaled_reference_w) * 0.5, 0.0),
         RoiAnchor::Center => (
-            (image_w as f32 - scaled_reference_w) * 0.5,
-            (image_h as f32 - scaled_reference_h) * 0.5,
+            (image_w as f64 - scaled_reference_w) * 0.5,
+            (image_h as f64 - scaled_reference_h) * 0.5,
         ),
     };
 
-    let left = offset_x + rect.x as f32 * scale;
-    let top = offset_y + rect.y as f32 * scale;
-    let right = offset_x + (rect.x + rect.w) as f32 * scale;
-    let bottom = offset_y + (rect.y + rect.h) as f32 * scale;
-    if left < 0.0 || top < 0.0 || right > image_w as f32 || bottom > image_h as f32 {
+    let left = offset_x + rect.x as f64 * scale;
+    let top = offset_y + rect.y as f64 * scale;
+    let right = offset_x + (rect.x + rect.w) as f64 * scale;
+    let bottom = offset_y + (rect.y + rect.h) as f64 * scale;
+    if left < 0.0 || top < 0.0 || right > image_w as f64 || bottom > image_h as f64 {
         bail!(
             "scaled ROI ({:.1},{:.1},{:.1},{:.1}) is outside image {}x{}",
             left,
@@ -217,24 +251,37 @@ pub fn resolve_calibration_roi_for_size(
         );
     }
 
-    let x = left.round() as u32;
-    let y = top.round() as u32;
-    let right = right.round() as u32;
-    let bottom = bottom.round() as u32;
+    // Keep the complete continuous Page ROI inside the integer capture rect.
+    // The fractional offset is preserved in RoiGeometry for native sampling.
+    let x = left.floor() as u32;
+    let y = top.floor() as u32;
+    let right = right.ceil() as u32;
+    let bottom = bottom.ceil() as u32;
 
-    Ok(ImageRect {
-        x,
-        y,
-        w: right.saturating_sub(x).max(1),
-        h: bottom.saturating_sub(y).max(1),
+    Ok(ResolvedRoi {
+        rect: ImageRect {
+            x,
+            y,
+            w: right.saturating_sub(x).max(1),
+            h: bottom.saturating_sub(y).max(1),
+        },
+        geometry: RoiGeometry {
+            scale,
+            logical_origin_x: left - x as f64,
+            logical_origin_y: top - y as f64,
+        },
     })
 }
 
-pub fn detect_slot_layout(image: RgbaImage, expected_layout: SlotLayout) -> Result<RoiObservation> {
+pub fn detect_slot_layout(
+    image: RgbaImage,
+    geometry: RoiGeometry,
+    expected_layout: SlotLayout,
+) -> Result<RoiObservation> {
     if image.width() == 0 || image.height() == 0 {
         bail!("cannot detect slots in an empty ROI image");
     }
-    let slots = geometry::detect(&image, expected_layout)?;
+    let slots = geometry::detect(&image, geometry, expected_layout)?;
     Ok(RoiObservation {
         image,
         layout: expected_layout,

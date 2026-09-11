@@ -1,9 +1,8 @@
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
-use fast_image_resize as fir;
-use fir::{ResizeAlg, ResizeOptions, Resizer};
-use image::{GrayImage, RgbaImage};
+use image::RgbaImage;
 use rayon::prelude::*;
 use tracing::debug;
 
@@ -11,308 +10,733 @@ use crate::image_rect::ImageRect;
 use crate::item::ItemKind;
 use crate::vision::color;
 
-use super::{
-    HOME_BOOSTER_X, HOME_COLS, LIST_COLS, ROI_REFERENCE_H, ROI_REFERENCE_H_F32, ROI_REFERENCE_W,
-    ROI_REFERENCE_W_F32, SLOT_SIZE_I32, Slot, SlotKind, SlotLayout,
-};
+use super::{HOME_COLS, LIST_COLS, RoiGeometry, Slot, SlotKind, SlotLayout};
 
-// Window sizes for the three-band luma edge response.
-const H_WIN: i32 = 48;
-const H_LINE_H: i32 = 3;
-const H_SIDE_H: i32 = 7;
-const V_WIN: i32 = 48;
-const V_LINE_W: i32 = 3;
-const V_SIDE_W: i32 = 7;
-const Z_EPS: f32 = 0.12;
+const SLOT_SIDE_LOGICAL: f64 = 78.0;
+const GRID_PITCH_LOGICAL: f64 = 85.0;
+const HOME_BOOSTER_X_LOGICAL: f64 = 343.0;
+const HOME_Y_LOGICAL: f64 = 478.0;
+const HOME_Y_SEARCH_LOGICAL: f64 = 2.0;
+const HOME_SCORE_THRESHOLD: f32 = 0.05;
+const LIST_Y_MIN_LOGICAL: f64 = 90.0;
+const LIST_Y_MAX_LOGICAL: f64 = 525.0;
+const LIST_MAX_ROWS: usize = 10;
 
-const H_RESPONSE_THR: f32 = 0.18;
-const V_RESPONSE_THR: f32 = 0.16;
-const H_RESPONSE_HI: f32 = 0.75;
-const V_RESPONSE_HI: f32 = 0.70;
+const FRAME_COLOR_RETAIN_RATIO: f32 = 0.50;
+const EDGE_RETAIN_RATIO: f32 = 2.0 / 3.0;
+const PAGE_THRESHOLD_RATIO: f32 = 1.0 / 3.0;
+const COLUMN_SUPPORT_RATIO: f32 = 0.10;
 
-// Candidate x/y are fixed slot anchors. Each edge is measured with a small
-// thickness band rather than shifting the edge to maximize its response.
-// Horizontal edges prefer the theoretical center pixel and use the strongest
-// adjacent pixel only as thickness / sampling support. Vertical edges retain the
-// more tolerant top-k reduction because column x is not scanned independently.
-const EDGE_BAND: i32 = 1;
-const H_EDGE_CENTER_WEIGHT: f32 = 2.0;
-const EDGE_BAND_TOPK: usize = 2;
-const SEGMENT_BINS: usize = 10;
-const V_SEGMENT_SKIP_CENTER_BINS: usize = 2;
+const AA_RADIUS: i32 = 4;
+const AA_MAX_OPPOSITE_DELTA: f64 = 0.75;
+const AA_MAX_RESIDUAL: f64 = 1.0;
 
-const H_SEGMENT_SAMPLE_STEP: i32 = 1;
-const SEGMENT_MIN_BIN_SCORE: f32 = 0.22;
-
-const MIN_SLOT_SCORE: f32 = 0.26;
-const MIN_HORIZONTAL_EDGE: f32 = 0.24;
-const MIN_SIDE: f32 = 0.16;
-
-// Robust frame-luma consistency. A slot contributes 36 border segments:
-// ten each on top/bottom and eight each on the intentionally gapped sides.
-const BORDER_SEGMENTS: usize = 4 * SEGMENT_BINS - 2 * V_SEGMENT_SKIP_CENTER_BINS;
-const BORDER_UNIFORMITY_TRIM: usize = 8;
-const BORDER_UNIFORMITY_RETAINED: usize = BORDER_SEGMENTS - BORDER_UNIFORMITY_TRIM;
-const BORDER_UNIFORMITY_LUMA_FLOOR: f32 = 0.08;
-const BORDER_UNIFORMITY_GOOD: f32 = 0.10;
-const BORDER_UNIFORMITY_BAD: f32 = 0.30;
-const BORDER_UNIFORMITY_MAX_PENALTY: f32 = 0.60;
-
-// Slot score weights: emphasize top/bottom pairing so a single strong line
-// cannot dominate a slot score.
-const TB_MIN_WEIGHT: f32 = 0.55;
-const TB_MEAN_WEIGHT: f32 = 0.25;
-const SIDE_MEAN_WEIGHT: f32 = 0.15;
-const SIDE_BEST_WEIGHT: f32 = 0.05;
-
-const ROW_THRESHOLD: f32 = 0.16;
 // Empty home slots have a nearly uniform center. Relative variation keeps the
 // filled check stable across global SDR/HDR brightness changes.
-const HOME_CONTENT_INSET: i32 = 19;
+const HOME_CONTENT_INSET_RATIO: f32 = 14.0 / 78.0;
 const HOME_CONTENT_MEAN_FLOOR: f32 = 0.08;
 const HOME_CONTENT_MIN_RELATIVE_STD: f32 = 0.15;
 
 // Use the central 90% of the calibrated home-booster hex to avoid its border.
 const BOOSTER_HEX_CENTER_X: f32 = 0.5000;
 const BOOSTER_HEX_CENTER_Y: f32 = 0.5048;
-const BOOSTER_CONTENT_SIDE_LEN: f32 = 0.4250 * 0.90;
-const HOME_BOOSTER_MIN_YELLOW_RATIO: f32 = 0.40;
-const ROW_MIN_DIST: i32 = 113;
+const BOOSTER_HEX_SIDE_LEN: f32 = 0.4250;
+const BOOSTER_CONTENT_SCALE: f32 = 0.90;
+const BOOSTER_RING_INNER_SCALE: f32 = 0.85;
+const BOOSTER_CORE_SCALE: f32 = 0.60;
+const HOME_BOOSTER_MIN_YELLOW_RATIO: f32 = 0.35;
+const HOME_BOOSTER_MIN_RING_YELLOW_RATIO: f32 = 0.80;
+const HOME_BOOSTER_MIN_CORE_DARK_RATIO: f32 = 0.10;
+const HOME_BOOSTER_MAX_CORE_LUMA: u8 = 90;
 
-// Detection runs in the canonical ROI coordinate system. Input ROIs with the
-// same aspect ratio are normalized before scoring, then boxes are mapped back to
-// source coordinates.
-
-#[derive(Clone, Copy)]
-struct Profile {
-    cols: [i32; 4],
-    y_min: i32,
-    y_max: i32,
-    max_rows: usize,
-    min_slots: usize,
+#[derive(Clone, Copy, Debug, Default)]
+struct EdgeSample {
+    contrast: f32,
+    color: [f32; 3],
 }
 
-const LIST_PROFILE: Profile = Profile {
-    cols: LIST_COLS,
-    y_min: 120,
-    y_max: 700,
-    max_rows: 10,
-    min_slots: 1,
-};
-const HOME_PROFILE: Profile = Profile {
-    cols: HOME_COLS,
-    y_min: 620,
-    y_max: 652,
-    max_rows: 1,
-    min_slots: HOME_COLS.len(),
-};
-
-#[derive(Clone)]
-struct SlotCandidate {
-    x: i32,
-    col: u32,
+#[derive(Clone, Copy, Debug, Default)]
+struct SlotEvidence {
+    q: f32,
+    cross_support: f32,
 }
 
 #[derive(Clone)]
 struct RowCandidate {
     y: i32,
     score: f32,
-    slots: Vec<SlotCandidate>,
+    slots: [SlotEvidence; 4],
 }
 
-struct ProfileLookup {
-    h_lines: Vec<LineScores>,
-    h_x_to_index: Vec<Option<usize>>,
-    v_x_to_index: Vec<Option<usize>>,
-    v_lines: Vec<LineScores>,
+struct DetectedRow {
+    y: f64,
+    occupied_columns: usize,
 }
 
-struct LineScores {
-    pos: i32,
-    start: i32,
-    scores: Vec<f32>,
+#[derive(Clone, Copy)]
+struct SamplingParams {
+    side: f64,
+    trim: i32,
+    step: i32,
+    reference_distance: i32,
+    reference_half_width: i32,
 }
 
-struct IntegralImage {
-    width: usize,
-    height: usize,
-    sum: Vec<f32>,
-    sum_sq: Vec<f32>,
+impl SamplingParams {
+    fn new(scale: f64) -> Self {
+        let sampling_scale = scale * 432.0 / 576.0;
+        let edge_envelope = (2.0 * sampling_scale).ceil().max(1.0) as i32;
+        Self {
+            side: SLOT_SIDE_LOGICAL * scale,
+            trim: round_ties_even(10.0 * sampling_scale).max(2),
+            step: round_ties_even(4.0 * sampling_scale).max(1),
+            reference_distance: round_ties_even(6.0 * sampling_scale).max(edge_envelope + 2),
+            reference_half_width: round_ties_even(0.75 * sampling_scale).max(0),
+        }
+    }
 }
 
-pub fn detect(screenshot: &RgbaImage, expected_layout: SlotLayout) -> Result<Vec<Slot>> {
+struct HorizontalProfile {
+    y_min: i32,
+    tangents: Vec<i32>,
+    samples: Vec<EdgeSample>,
+}
+
+impl HorizontalProfile {
+    fn build(image: &RgbaImage, left: f64, y_min: i32, y_max: i32, params: SamplingParams) -> Self {
+        let tangents = tangent_positions(
+            left + params.trim as f64,
+            left + params.side - params.trim as f64,
+            params.step,
+        );
+        let height = (y_max - y_min + 1).max(0) as usize;
+        let mut samples = Vec::with_capacity(height * tangents.len());
+        for y in y_min..=y_max {
+            samples.extend(
+                tangents
+                    .iter()
+                    .map(|&x| sample_horizontal_point(image, x, y, params).unwrap_or_default()),
+            );
+        }
+        Self {
+            y_min,
+            tangents,
+            samples,
+        }
+    }
+
+    fn at(&self, boundary: f64) -> Option<&[EdgeSample]> {
+        let row = usize::try_from(round_ties_even(boundary) - self.y_min).ok()?;
+        let width = self.tangents.len();
+        self.samples.get(row * width..(row + 1) * width)
+    }
+}
+
+struct FixedEdgeProfiles {
+    horizontal: [HorizontalProfile; 4],
+    vertical: [Vec<EdgeSample>; 8],
+    vertical_offsets: Vec<i32>,
+    params: SamplingParams,
+}
+
+impl FixedEdgeProfiles {
+    fn build(
+        image: &RgbaImage,
+        columns: [f64; 4],
+        y_min: i32,
+        y_max: i32,
+        params: SamplingParams,
+    ) -> Self {
+        let started = Instant::now();
+        let horizontal_vec = columns
+            .par_iter()
+            .map(|&left| {
+                HorizontalProfile::build(
+                    image,
+                    left,
+                    y_min,
+                    round_ties_even(y_max as f64 + params.side),
+                    params,
+                )
+            })
+            .collect::<Vec<_>>();
+        let horizontal: [HorizontalProfile; 4] = horizontal_vec
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("list geometry always has four columns"));
+
+        let boundaries: [f64; 8] = std::array::from_fn(|index| {
+            let left = columns[index / 2];
+            if index.is_multiple_of(2) {
+                left
+            } else {
+                left + params.side
+            }
+        });
+        let vertical_vec = boundaries
+            .par_iter()
+            .map(|&boundary| {
+                (0..image.height() as i32)
+                    .map(|y| sample_vertical_point(image, boundary, y, params).unwrap_or_default())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let vertical: [Vec<EdgeSample>; 8] = vertical_vec
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("four columns always have eight vertical edges"));
+
+        let vertical_offsets = vertical_tangent_offsets(params);
+        debug!(
+            horizontal_points = horizontal
+                .iter()
+                .map(|profile| profile.samples.len())
+                .sum::<usize>(),
+            vertical_points = vertical.iter().map(Vec::len).sum::<usize>(),
+            elapsed = ?started.elapsed(),
+            "fixed edge profiles built"
+        );
+        Self {
+            horizontal,
+            vertical,
+            vertical_offsets,
+            params,
+        }
+    }
+
+    fn score_slot(&self, col: usize, y: i32, scratch: &mut SlotScratch) -> SlotEvidence {
+        let Some(top) = self.horizontal[col].at(y as f64) else {
+            return SlotEvidence::default();
+        };
+        let Some(bottom) = self.horizontal[col].at(y as f64 + self.params.side) else {
+            return SlotEvidence::default();
+        };
+
+        scratch.left.clear();
+        scratch.right.clear();
+        let left_line = &self.vertical[col * 2];
+        let right_line = &self.vertical[col * 2 + 1];
+        for &offset in &self.vertical_offsets {
+            let index = y + offset;
+            if let Ok(index) = usize::try_from(index)
+                && let (Some(&left), Some(&right)) = (left_line.get(index), right_line.get(index))
+            {
+                scratch.left.push(left);
+                scratch.right.push(right);
+            }
+        }
+
+        score_edge_sets(
+            top,
+            bottom,
+            &scratch.left,
+            &scratch.right,
+            &mut scratch.scoring,
+        )
+    }
+}
+
+#[derive(Default)]
+struct SlotScratch {
+    top: Vec<EdgeSample>,
+    bottom: Vec<EdgeSample>,
+    left: Vec<EdgeSample>,
+    right: Vec<EdgeSample>,
+    scoring: ScoringScratch,
+}
+
+#[derive(Default)]
+struct ScoringScratch {
+    samples: Vec<EdgeSample>,
+    weighted_values: Vec<(f32, f32)>,
+    values: Vec<f32>,
+}
+
+#[derive(Clone, Copy)]
+struct EdgeQuality {
+    q: f32,
+    cross_support: f32,
+}
+
+pub fn detect(
+    screenshot: &RgbaImage,
+    geometry: RoiGeometry,
+    expected_layout: SlotLayout,
+) -> Result<Vec<Slot>> {
     if screenshot.width() == 0 || screenshot.height() == 0 {
         bail!("cannot run geometry detector on an empty image");
     }
 
     let started = Instant::now();
-    let luma = luma_canonical(screenshot)?;
-    let luma_time = started.elapsed();
-    let integral = IntegralImage::from_luma(&luma);
-    let integral_time = started.elapsed() - luma_time;
-
-    let detections = match expected_layout {
-        SlotLayout::Home => detect_home(screenshot, &integral),
-        SlotLayout::List(item_kind) => detect_list(
-            screenshot.width(),
-            screenshot.height(),
-            &integral,
-            item_kind,
-        ),
+    let slots = match expected_layout {
+        SlotLayout::Home => detect_home(screenshot, geometry),
+        SlotLayout::List(item_kind) => detect_list(screenshot, geometry, item_kind),
     };
-
     debug!(
         target: "hd2_preset_helper::perf",
         ?expected_layout,
-        luma = ?luma_time,
-        integral = ?integral_time,
         total = ?started.elapsed(),
-        detections = detections.len(),
+        detections = slots.len(),
         "geometry detector timing"
     );
-    Ok(detections)
+    Ok(slots)
 }
 
-fn detect_home(rgba: &RgbaImage, integral: &IntegralImage) -> Vec<Slot> {
-    let lookup = ProfileLookup::new(integral, &HOME_PROFILE);
-    let rows = scan_profile(&lookup, integral, HOME_PROFILE);
-    home_rows_to_slots(rgba, integral, &rows)
-}
-
-fn detect_list(
-    image_w: u32,
-    image_h: u32,
-    integral: &IntegralImage,
-    item_kind: ItemKind,
-) -> Vec<Slot> {
-    let lookup = ProfileLookup::new(integral, &LIST_PROFILE);
-    let rows = scan_profile(&lookup, integral, LIST_PROFILE);
-    match item_kind {
-        ItemKind::Booster => booster_list_rows_to_slots(image_w, image_h, &LIST_PROFILE, &rows),
-        ItemKind::Stratagem => {
-            rows_to_slots_by(image_w, image_h, &rows, |_, _| SlotKind::Stratagem)
+fn detect_home(image: &RgbaImage, geometry: RoiGeometry) -> Vec<Slot> {
+    let params = SamplingParams::new(geometry.scale);
+    let columns = home_columns(geometry);
+    let nominal_y = geometry.logical_origin_y + HOME_Y_LOGICAL * geometry.scale;
+    let search_radius = (HOME_Y_SEARCH_LOGICAL * geometry.scale).ceil() as i32;
+    let vertical_offsets = vertical_tangent_offsets(params);
+    let mut scratch = SlotScratch::default();
+    let mut best: Option<RowCandidate> = None;
+    let center = round_ties_even(nominal_y);
+    for y in center - search_radius..=center + search_radius {
+        let slots = std::array::from_fn(|col| {
+            score_slot_direct(
+                image,
+                columns[col],
+                y as f64,
+                params,
+                &vertical_offsets,
+                &mut scratch,
+            )
+        });
+        let score = second_highest(slots.map(|slot| slot.q));
+        if best.as_ref().is_none_or(|current| score > current.score) {
+            best = Some(RowCandidate { y, score, slots });
         }
     }
-}
-
-fn home_rows_to_slots(
-    rgba: &RgbaImage,
-    integral: &IntegralImage,
-    rows: &[RowCandidate],
-) -> Vec<Slot> {
-    let Some(row) = rows.first() else {
+    let Some(best) = best.filter(|candidate| candidate.score >= HOME_SCORE_THRESHOLD) else {
         return Vec::new();
     };
+    debug!(
+        y = best.y,
+        home_score = best.score,
+        slots = ?best.slots,
+        "fixed home frame selected"
+    );
 
-    let mut slots: Vec<Slot> = row
-        .slots
-        .iter()
-        .map(|candidate| {
-            let kind = if slot_has_content(integral, candidate.x, row.y) {
-                SlotKind::Stratagem
-            } else {
-                SlotKind::StratagemEmpty
-            };
-            slot_from_rect(
-                slot_rect(rgba.width(), rgba.height(), candidate.x, row.y),
+    let supported = best.slots.map(|slot| slot.q >= HOME_SCORE_THRESHOLD);
+    let top =
+        refine_row_aa(image, best.y as f64, &supported, columns, params).unwrap_or(best.y as f64);
+    let mut slots = columns
+        .into_iter()
+        .enumerate()
+        .map(|(col, left)| {
+            slot_from_native(
+                left,
+                top,
+                params.side,
                 0,
-                candidate.col,
-                kind,
+                col as u32,
+                SlotKind::StratagemEmpty,
             )
         })
-        .collect();
-
-    if slots.len() != HOME_COLS.len() {
-        return Vec::new();
+        .collect::<Vec<_>>();
+    for slot in &mut slots {
+        if slot_has_content(image, slot) {
+            slot.kind = SlotKind::Stratagem;
+        }
     }
 
-    let rect = slot_rect(rgba.width(), rgba.height(), HOME_BOOSTER_X, row.y);
-    slots.push(slot_from_rect(
-        rect,
+    let mut booster = slot_from_native(
+        geometry.logical_origin_x + HOME_BOOSTER_X_LOGICAL * geometry.scale,
+        top,
+        params.side,
         0,
         HOME_COLS.len() as u32,
-        home_booster_kind(rgba, rect),
-    ));
-
+        SlotKind::HomeBoosterEmpty,
+    );
+    booster.kind = home_booster_kind(
+        image,
+        ImageRect {
+            x: booster.x,
+            y: booster.y,
+            w: booster.w,
+            h: booster.h,
+        },
+    );
+    slots.push(booster);
     slots
 }
 
-fn booster_list_rows_to_slots(
-    image_w: u32,
-    image_h: u32,
-    profile: &Profile,
-    rows: &[RowCandidate],
-) -> Vec<Slot> {
-    let first_row_y_max = profile.y_min + ROW_MIN_DIST;
-    rows_to_slots_by(image_w, image_h, rows, |row, slot| {
-        if row.y < first_row_y_max && slot.col == 0 {
-            SlotKind::NoBoosterOption
-        } else {
-            SlotKind::Booster
-        }
-    })
+fn detect_list(image: &RgbaImage, geometry: RoiGeometry, item_kind: ItemKind) -> Vec<Slot> {
+    let params = SamplingParams::new(geometry.scale);
+    let columns = list_columns(geometry);
+    let y_min = (geometry.logical_origin_y + LIST_Y_MIN_LOGICAL * geometry.scale).ceil() as i32;
+    let y_max = (geometry.logical_origin_y + LIST_Y_MAX_LOGICAL * geometry.scale).floor() as i32;
+    if y_min > y_max {
+        return Vec::new();
+    }
+
+    let profiles = FixedEdgeProfiles::build(image, columns, y_min, y_max, params);
+    let curve = (y_min..=y_max)
+        .into_par_iter()
+        .map_init(SlotScratch::default, |scratch, y| {
+            let slots = std::array::from_fn(|col| profiles.score_slot(col, y, scratch));
+            RowCandidate {
+                y,
+                score: slots.into_iter().map(|slot| slot.q).fold(0.0, f32::max),
+                slots,
+            }
+        })
+        .collect::<Vec<_>>();
+    let peaks = local_maxima(&curve);
+    let min_gap = round_ties_even(84.0 * geometry.scale).max(1);
+    let raw = select_rows_dp_hard(&peaks, LIST_MAX_ROWS, min_gap);
+    let page_scale = median_top_three(&raw);
+    if page_scale <= f32::EPSILON {
+        return Vec::new();
+    }
+    let threshold = page_scale * PAGE_THRESHOLD_RATIO;
+    let eligible = peaks
+        .into_iter()
+        .filter(|row| row.score >= threshold)
+        .collect::<Vec<_>>();
+    let selected = select_rows_dp_hard(&eligible, LIST_MAX_ROWS, min_gap);
+    debug!(
+        page_scale,
+        threshold,
+        raw_rows = raw.len(),
+        final_rows = selected.len(),
+        rows = ?selected
+            .iter()
+            .map(|row| (row.y, row.score, row.slots))
+            .collect::<Vec<_>>(),
+        "fixed list rows selected"
+    );
+
+    let rows = selected
+        .into_iter()
+        .map(|row| {
+            let supported = supported_columns(&row.slots);
+            let occupied_columns = supported
+                .iter()
+                .rposition(|&supported| supported)
+                .map_or(1, |col| col + 1);
+            let y = refine_row_aa(image, row.y as f64, &supported, columns, params)
+                .unwrap_or(row.y as f64);
+            DetectedRow {
+                y,
+                occupied_columns,
+            }
+        })
+        .collect::<Vec<_>>();
+    list_rows_to_slots(&rows, geometry, params.side, columns, item_kind)
 }
 
-fn rows_to_slots_by(
-    image_w: u32,
-    image_h: u32,
-    rows: &[RowCandidate],
-    mut kind_for_slot: impl FnMut(&RowCandidate, &SlotCandidate) -> SlotKind,
+fn supported_columns(slots: &[SlotEvidence; 4]) -> [bool; 4] {
+    let strongest = slots
+        .iter()
+        .map(|slot| slot.cross_support)
+        .fold(0.0, f32::max);
+    let threshold = strongest * COLUMN_SUPPORT_RATIO;
+    slots.map(|slot| slot.cross_support >= threshold)
+}
+
+fn list_rows_to_slots(
+    rows: &[DetectedRow],
+    geometry: RoiGeometry,
+    side: f64,
+    columns: [f64; 4],
+    item_kind: ItemKind,
 ) -> Vec<Slot> {
+    let no_booster_y_max =
+        geometry.logical_origin_y + (LIST_Y_MIN_LOGICAL + GRID_PITCH_LOGICAL) * geometry.scale;
     let mut slots = Vec::new();
     for (row_index, row) in rows.iter().enumerate() {
-        for candidate in &row.slots {
-            slots.push(slot_from_rect(
-                slot_rect(image_w, image_h, candidate.x, row.y),
+        for (col, &left) in columns.iter().enumerate().take(row.occupied_columns) {
+            let kind = match item_kind {
+                ItemKind::Booster if row.y < no_booster_y_max && col == 0 => {
+                    SlotKind::NoBoosterOption
+                }
+                ItemKind::Booster => SlotKind::Booster,
+                ItemKind::Stratagem => SlotKind::Stratagem,
+            };
+            slots.push(slot_from_native(
+                left,
+                row.y,
+                side,
                 row_index as u32,
-                candidate.col,
-                kind_for_slot(row, candidate),
+                col as u32,
+                kind,
             ));
         }
     }
     slots
 }
 
-fn slot_from_rect(rect: ImageRect, row: u32, col: u32, kind: SlotKind) -> Slot {
-    Slot {
-        x: rect.x,
-        y: rect.y,
-        w: rect.w,
-        h: rect.h,
-        row,
-        col,
-        kind,
-        classification: None,
-    }
-}
-
-fn slot_rect(image_w: u32, image_h: u32, x: i32, y: i32) -> ImageRect {
-    let sx = image_w as f32 / ROI_REFERENCE_W_F32;
-    let sy = image_h as f32 / ROI_REFERENCE_H_F32;
-    ImageRect {
-        x: (x as f32 * sx).round() as u32,
-        y: (y as f32 * sy).round() as u32,
-        w: (SLOT_SIZE_I32 as f32 * sx).round().max(1.0) as u32,
-        h: (SLOT_SIZE_I32 as f32 * sy).round().max(1.0) as u32,
-    }
-}
-
-fn scan_profile(
-    lookup: &ProfileLookup,
-    integral: &IntegralImage,
-    profile: Profile,
-) -> Vec<RowCandidate> {
-    let mut candidates = Vec::new();
-
-    for y in profile.y_min..=profile.y_max {
-        if let Some(row) = score_row_at(lookup, integral, &profile, y) {
-            candidates.push(row);
+fn score_slot_direct(
+    image: &RgbaImage,
+    left: f64,
+    top: f64,
+    params: SamplingParams,
+    vertical_offsets: &[i32],
+    scratch: &mut SlotScratch,
+) -> SlotEvidence {
+    let tangents = tangent_positions(
+        left + params.trim as f64,
+        left + params.side - params.trim as f64,
+        params.step,
+    );
+    scratch.top.clear();
+    scratch.bottom.clear();
+    scratch.left.clear();
+    scratch.right.clear();
+    scratch.top.extend(
+        tangents
+            .iter()
+            .filter_map(|&x| sample_horizontal_point(image, x, round_ties_even(top), params)),
+    );
+    scratch.bottom.extend(tangents.iter().filter_map(|&x| {
+        sample_horizontal_point(image, x, round_ties_even(top + params.side), params)
+    }));
+    for &offset in vertical_offsets {
+        let y = round_ties_even(top + offset as f64);
+        if let Some(sample) = sample_vertical_point(image, left, y, params) {
+            scratch.left.push(sample);
+        }
+        if let Some(sample) = sample_vertical_point(image, left + params.side, y, params) {
+            scratch.right.push(sample);
         }
     }
+    score_edge_sets(
+        &scratch.top,
+        &scratch.bottom,
+        &scratch.left,
+        &scratch.right,
+        &mut scratch.scoring,
+    )
+}
 
-    // Each integer y has already been scored, so DP itself is the final joint
-    // optimization over row scores and the hard spacing constraint.
-    select_rows_dp_hard(&candidates, profile.max_rows, ROW_MIN_DIST)
+fn score_edge_sets(
+    top: &[EdgeSample],
+    bottom: &[EdgeSample],
+    left: &[EdgeSample],
+    right: &[EdgeSample],
+    scratch: &mut ScoringScratch,
+) -> SlotEvidence {
+    if top.is_empty() || bottom.is_empty() || left.is_empty() || right.is_empty() {
+        return SlotEvidence::default();
+    }
+    let horizontal_color = robust_frame_color(top, bottom, scratch);
+    let vertical_color = robust_frame_color(left, right, scratch);
+    let top = edge_quality(top, vertical_color, &mut scratch.values);
+    let bottom = edge_quality(bottom, vertical_color, &mut scratch.values);
+    let left = edge_quality(left, horizontal_color, &mut scratch.values);
+    let right = edge_quality(right, horizontal_color, &mut scratch.values);
+    SlotEvidence {
+        q: (top.q * bottom.q * left.q * right.q).sqrt().sqrt(),
+        cross_support: 0.25
+            * (top.cross_support + bottom.cross_support + left.cross_support + right.cross_support),
+    }
+}
+
+fn robust_frame_color(
+    first: &[EdgeSample],
+    second: &[EdgeSample],
+    scratch: &mut ScoringScratch,
+) -> [f32; 3] {
+    scratch.samples.clear();
+    scratch.samples.extend_from_slice(first);
+    scratch.samples.extend_from_slice(second);
+    scratch
+        .samples
+        .sort_unstable_by(|left, right| right.contrast.total_cmp(&left.contrast));
+    let retained = ((scratch.samples.len() as f32 * FRAME_COLOR_RETAIN_RATIO).ceil() as usize)
+        .clamp(1, scratch.samples.len());
+    scratch.samples.truncate(retained);
+
+    std::array::from_fn(|channel| {
+        scratch.weighted_values.clear();
+        scratch.weighted_values.extend(
+            scratch
+                .samples
+                .iter()
+                .map(|sample| (sample.color[channel], sample.contrast)),
+        );
+        weighted_median(&mut scratch.weighted_values)
+    })
+}
+
+fn weighted_median(values: &mut [(f32, f32)]) -> f32 {
+    values.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
+    let total = values.iter().map(|(_, weight)| *weight).sum::<f32>();
+    if total <= f32::EPSILON {
+        return median_pairs(values);
+    }
+    let target = total * 0.5;
+    let mut cumulative = 0.0;
+    for &(value, weight) in values.iter() {
+        cumulative += weight;
+        if cumulative >= target {
+            return value;
+        }
+    }
+    values.last().map_or(0.0, |&(value, _)| value)
+}
+
+fn median_pairs(values: &[(f32, f32)]) -> f32 {
+    let mid = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        0.5 * (values[mid - 1].0 + values[mid].0)
+    } else {
+        values[mid].0
+    }
+}
+
+fn edge_quality(
+    samples: &[EdgeSample],
+    frame_color: [f32; 3],
+    values: &mut Vec<f32>,
+) -> EdgeQuality {
+    values.clear();
+    values.extend(samples.iter().map(|sample| {
+        let mismatch = color_distance(sample.color, frame_color);
+        sample.contrast * sample.contrast / (sample.contrast + mismatch + 1.0e-9)
+    }));
+    let cross_support = values.iter().sum::<f32>() / values.len() as f32;
+    values.sort_unstable_by(f32::total_cmp);
+    let retained =
+        ((values.len() as f32 * EDGE_RETAIN_RATIO).ceil() as usize).clamp(1, values.len());
+    let robust = values[values.len() - retained..].iter().sum::<f32>() / retained as f32;
+    let q25 = quantile_sorted(values, 0.25);
+    EdgeQuality {
+        q: (robust * q25).max(0.0).sqrt(),
+        cross_support,
+    }
+}
+
+fn quantile_sorted(values: &[f32], quantile: f32) -> f32 {
+    if values.len() == 1 {
+        return values[0];
+    }
+    let position = quantile * (values.len() - 1) as f32;
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    let fraction = position - lower as f32;
+    values[lower] + (values[upper] - values[lower]) * fraction
+}
+
+fn sample_horizontal_point(
+    image: &RgbaImage,
+    tangent_x: i32,
+    normal_y: i32,
+    params: SamplingParams,
+) -> Option<EdgeSample> {
+    let center = rgb_at(image, tangent_x, normal_y)?;
+    let outer = mean_rgb_vertical(
+        image,
+        tangent_x,
+        normal_y - params.reference_distance,
+        params.reference_half_width,
+    )?;
+    let inner = mean_rgb_vertical(
+        image,
+        tangent_x,
+        normal_y + params.reference_distance,
+        params.reference_half_width,
+    )?;
+    Some(EdgeSample {
+        contrast: color_distance(center, outer).min(color_distance(center, inner)),
+        color: center,
+    })
+}
+
+fn sample_vertical_point(
+    image: &RgbaImage,
+    normal_x: f64,
+    tangent_y: i32,
+    params: SamplingParams,
+) -> Option<EdgeSample> {
+    let normal_x = round_ties_even(normal_x);
+    let center = rgb_at(image, normal_x, tangent_y)?;
+    let outer = mean_rgb_horizontal(
+        image,
+        normal_x - params.reference_distance,
+        tangent_y,
+        params.reference_half_width,
+    )?;
+    let inner = mean_rgb_horizontal(
+        image,
+        normal_x + params.reference_distance,
+        tangent_y,
+        params.reference_half_width,
+    )?;
+    Some(EdgeSample {
+        contrast: color_distance(center, outer).min(color_distance(center, inner)),
+        color: center,
+    })
+}
+
+fn rgb_at(image: &RgbaImage, x: i32, y: i32) -> Option<[f32; 3]> {
+    if x < 0 || y < 0 || x >= image.width() as i32 || y >= image.height() as i32 {
+        return None;
+    }
+    let [r, g, b, _] = image.get_pixel(x as u32, y as u32).0;
+    Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0])
+}
+
+fn mean_rgb_vertical(image: &RgbaImage, x: i32, y: i32, half_width: i32) -> Option<[f32; 3]> {
+    mean_rgb((-half_width..=half_width).filter_map(|offset| rgb_at(image, x, y + offset)))
+}
+
+fn mean_rgb_horizontal(image: &RgbaImage, x: i32, y: i32, half_width: i32) -> Option<[f32; 3]> {
+    mean_rgb((-half_width..=half_width).filter_map(|offset| rgb_at(image, x + offset, y)))
+}
+
+fn mean_rgb(samples: impl Iterator<Item = [f32; 3]>) -> Option<[f32; 3]> {
+    let mut sum = [0.0; 3];
+    let mut count = 0u32;
+    for sample in samples {
+        for channel in 0..3 {
+            sum[channel] += sample[channel];
+        }
+        count += 1;
+    }
+    (count > 0).then(|| sum.map(|value| value / count as f32))
+}
+
+fn color_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
+    left.into_iter()
+        .zip(right)
+        .map(|(left, right)| (left - right).powi(2))
+        .sum::<f32>()
+        .sqrt()
+}
+
+fn tangent_positions(start: f64, end: f64, step: i32) -> Vec<i32> {
+    let first = round_ties_even(start);
+    let last = round_ties_even(end);
+    (first..=last).step_by(step as usize).collect()
+}
+
+fn vertical_tangent_offsets(params: SamplingParams) -> Vec<i32> {
+    tangent_positions(
+        params.trim as f64,
+        params.side - params.trim as f64,
+        params.step,
+    )
+    .into_iter()
+    .filter(|&offset| (offset as f64 - params.side * 0.5).abs() > params.side * 0.10)
+    .collect()
+}
+
+fn local_maxima(curve: &[RowCandidate]) -> Vec<RowCandidate> {
+    curve
+        .iter()
+        .enumerate()
+        .filter(|&(index, row)| {
+            let left = index
+                .checked_sub(1)
+                .and_then(|index| curve.get(index))
+                .map_or(f32::NEG_INFINITY, |row| row.score);
+            let right = curve
+                .get(index + 1)
+                .map_or(f32::NEG_INFINITY, |row| row.score);
+            row.score > left && row.score >= right && row.score > 0.0
+        })
+        .map(|(_, row)| row.clone())
+        .collect()
 }
 
 fn select_rows_dp_hard(
@@ -326,32 +750,32 @@ fn select_rows_dp_hard(
 
     let n = candidates.len();
     let k_max = max_rows.min(n);
-
     let mut prev = vec![-1isize; n];
-    let mut j: isize = -1;
+    let mut previous: isize = -1;
     for i in 0..n {
-        while (j + 1) < i as isize && candidates[i].y - candidates[(j + 1) as usize].y >= min_gap {
-            j += 1;
+        while (previous + 1) < i as isize
+            && candidates[i].y - candidates[(previous + 1) as usize].y >= min_gap
+        {
+            previous += 1;
         }
-        prev[i] = j;
+        prev[i] = previous;
     }
 
-    let neg = -1.0e30f32;
+    let negative = -1.0e30f32;
     let stride = k_max + 1;
-    let mut dp = vec![neg; (n + 1) * stride];
+    let mut dp = vec![negative; (n + 1) * stride];
     let mut take = vec![false; (n + 1) * stride];
     for i in 0..=n {
         dp[i * stride] = 0.0;
     }
-
     for i in 1..=n {
         let row = &candidates[i - 1];
-        let p = (prev[i - 1] + 1) as usize;
+        let compatible = (prev[i - 1] + 1) as usize;
         for k in 1..=k_max {
             let index = i * stride + k;
             let skip = dp[(i - 1) * stride + k];
-            let use_score = dp[p * stride + k - 1] + row.score;
-            if use_score > skip + 1e-9 {
+            let use_score = dp[compatible * stride + k - 1] + row.score;
+            if use_score > skip + 1.0e-9 {
                 dp[index] = use_score;
                 take[index] = true;
             } else {
@@ -364,7 +788,7 @@ fn select_rows_dp_hard(
     let mut best_score = dp[n * stride];
     for k in 1..=k_max {
         let score = dp[n * stride + k];
-        if score > best_score + 1e-9 {
+        if score > best_score + 1.0e-9 {
             best_score = score;
             best_k = k;
         }
@@ -386,139 +810,185 @@ fn select_rows_dp_hard(
     selected
 }
 
-fn score_row_at(
-    lookup: &ProfileLookup,
-    integral: &IntegralImage,
-    profile: &Profile,
-    y: i32,
-) -> Option<RowCandidate> {
-    let mut slots: [Option<SlotCandidate>; 4] = std::array::from_fn(|_| None);
-    let mut slot_count = 0usize;
-    let mut score = 0.0f32;
-    for (col, x) in profile.cols.into_iter().enumerate() {
-        if let Some((slot, slot_score)) = score_slot_at(lookup, integral, x, y, col as u32) {
-            score = score.max(slot_score);
-            slots[col] = Some(slot);
-            slot_count += 1;
+fn median_top_three(rows: &[RowCandidate]) -> f32 {
+    let mut values = rows.iter().map(|row| row.score).collect::<Vec<_>>();
+    values.sort_unstable_by(|left, right| right.total_cmp(left));
+    values.truncate(3);
+    median_values(&values)
+}
+
+fn median_values(values: &[f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut values = values.to_vec();
+    values.sort_unstable_by(f32::total_cmp);
+    median_sorted_f32(&values)
+}
+
+fn second_highest(mut values: [f32; 4]) -> f32 {
+    values.sort_unstable_by(|left, right| right.total_cmp(left));
+    values[1]
+}
+
+fn refine_row_aa(
+    image: &RgbaImage,
+    nominal_y: f64,
+    supported: &[bool; 4],
+    columns: [f64; 4],
+    params: SamplingParams,
+) -> Option<f64> {
+    let mut residuals = Vec::new();
+    for (col, &supported) in supported.iter().enumerate() {
+        if !supported {
+            continue;
+        }
+        let tangents = tangent_positions(
+            columns[col] + params.trim as f64,
+            columns[col] + params.side - params.trim as f64,
+            params.step,
+        );
+        let top = aa_horizontal_residual(image, nominal_y, &tangents, params);
+        let bottom = aa_horizontal_residual(image, nominal_y + params.side, &tangents, params);
+        if let (Some(top), Some(bottom)) = (top, bottom)
+            && (top - bottom).abs() <= AA_MAX_OPPOSITE_DELTA
+        {
+            residuals.extend([top, bottom]);
         }
     }
+    if residuals.is_empty() {
+        return None;
+    }
+    residuals.sort_unstable_by(f64::total_cmp);
+    let residual = median_sorted_f64(&residuals);
+    if residual.abs() > AA_MAX_RESIDUAL {
+        return None;
+    }
+    debug!(
+        nominal_y,
+        residual,
+        samples = residuals.len(),
+        "AA row phase refined"
+    );
+    Some(nominal_y + residual)
+}
 
-    // Rank a row by its strongest complete slot so a valid single-slot final row
-    // is not diluted by empty columns. Only allocate the retained slot vector for
-    // rows that pass both gates.
-    if slot_count < profile.min_slots || score < ROW_THRESHOLD {
+fn aa_horizontal_residual(
+    image: &RgbaImage,
+    boundary: f64,
+    tangents: &[i32],
+    params: SamplingParams,
+) -> Option<f64> {
+    const PROFILE_LEN: usize = (2 * AA_RADIUS + 1) as usize;
+    let anchor = round_ties_even(boundary);
+    let mut tangent_profiles = Vec::<[f32; PROFILE_LEN]>::new();
+    for &x in tangents {
+        let outer = mean_linear_rgb_vertical(
+            image,
+            x,
+            round_ties_even(boundary - params.reference_distance as f64),
+            params.reference_half_width,
+        )?;
+        let inner = mean_linear_rgb_vertical(
+            image,
+            x,
+            round_ties_even(boundary + params.reference_distance as f64),
+            params.reference_half_width,
+        )?;
+        let background: [f32; 3] =
+            std::array::from_fn(|channel| 0.5 * (outer[channel] + inner[channel]));
+        let mut differences = [[0.0; 3]; PROFILE_LEN];
+        let mut direction = [0.0; 3];
+        let mut direction_energy = 0.0;
+        for (index, offset) in (-AA_RADIUS..=AA_RADIUS).enumerate() {
+            let color = linear_rgb_at(image, x, anchor + offset)?;
+            differences[index] =
+                std::array::from_fn(|channel| color[channel] - background[channel]);
+            let energy = differences[index]
+                .iter()
+                .map(|value| value * value)
+                .sum::<f32>();
+            if energy > direction_energy {
+                direction_energy = energy;
+                direction = differences[index];
+            }
+        }
+        if direction_energy <= f32::EPSILON {
+            continue;
+        }
+        let mut profile = [0.0; PROFILE_LEN];
+        for (value, difference) in profile.iter_mut().zip(differences) {
+            *value = (difference
+                .into_iter()
+                .zip(direction)
+                .map(|(left, right)| left * right)
+                .sum::<f32>()
+                / direction_energy)
+                .clamp(0.0, 1.0);
+        }
+        tangent_profiles.push(profile);
+    }
+    if tangent_profiles.is_empty() {
         return None;
     }
 
-    Some(RowCandidate {
-        y,
-        score: score.clamp(0.0, 1.0),
-        slots: slots.into_iter().flatten().collect(),
+    let mut profile = [0.0; PROFILE_LEN];
+    let mut values = Vec::with_capacity(tangent_profiles.len());
+    for (index, output) in profile.iter_mut().enumerate() {
+        values.clear();
+        values.extend(tangent_profiles.iter().map(|profile| profile[index]));
+        values.sort_unstable_by(f32::total_cmp);
+        *output = median_sorted_f32(&values);
+    }
+    let floor = profile.into_iter().fold(f32::INFINITY, f32::min);
+    let mut total = 0.0f64;
+    let mut moment = 0.0f64;
+    for (index, value) in profile.into_iter().enumerate() {
+        let value = (value - floor).max(0.0) as f64;
+        let offset = index as i32 - AA_RADIUS;
+        total += value;
+        moment += offset as f64 * value;
+    }
+    if total <= f64::EPSILON {
+        return None;
+    }
+    let boundary_hat = anchor as f64 + moment / total + 0.5;
+    Some(boundary_hat - boundary)
+}
+
+fn mean_linear_rgb_vertical(
+    image: &RgbaImage,
+    x: i32,
+    y: i32,
+    half_width: i32,
+) -> Option<[f32; 3]> {
+    mean_rgb((-half_width..=half_width).filter_map(|offset| linear_rgb_at(image, x, y + offset)))
+}
+
+fn linear_rgb_at(image: &RgbaImage, x: i32, y: i32) -> Option<[f32; 3]> {
+    if x < 0 || y < 0 || x >= image.width() as i32 || y >= image.height() as i32 {
+        return None;
+    }
+    let [r, g, b, _] = image.get_pixel(x as u32, y as u32).0;
+    let table = linear_rgb_table();
+    Some([table[r as usize], table[g as usize], table[b as usize]])
+}
+
+fn linear_rgb_table() -> &'static [f32; 256] {
+    static TABLE: OnceLock<[f32; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        std::array::from_fn(|index| {
+            let value = index as f32 / 255.0;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        })
     })
 }
 
-fn score_slot_at(
-    lookup: &ProfileLookup,
-    integral: &IntegralImage,
-    x: i32,
-    y: i32,
-    col: u32,
-) -> Option<(SlotCandidate, f32)> {
-    let sw = SLOT_SIZE_I32;
-    let sh = SLOT_SIZE_I32;
-    let top = lookup.horizontal_edge_score(x, y);
-    let bottom = lookup.horizontal_edge_score(x, y + sh);
-    let left = lookup.vertical_edge_score(x, y);
-    let right = lookup.vertical_edge_score(x + sw, y);
-
-    let tb_min = top.min(bottom);
-    let tb_mean = 0.5 * (top + bottom);
-    let side_mean = 0.5 * (left + right);
-    let side_best = left.max(right);
-    let base_score = TB_MIN_WEIGHT * tb_min
-        + TB_MEAN_WEIGHT * tb_mean
-        + SIDE_MEAN_WEIGHT * side_mean
-        + SIDE_BEST_WEIGHT * side_best;
-
-    // Keep the established geometry gates first. Uniformity is evaluated only
-    // for candidates that could otherwise become real slots.
-    if top < MIN_HORIZONTAL_EDGE
-        || bottom < MIN_HORIZONTAL_EDGE
-        || side_best < MIN_SIDE
-        || base_score < MIN_SLOT_SCORE
-    {
-        return None;
-    }
-
-    let score = base_score * border_uniformity_factor(integral, x, y);
-    if score < MIN_SLOT_SCORE {
-        return None;
-    }
-
-    Some((SlotCandidate { x, col }, score))
-}
-
-fn border_uniformity_factor(integral: &IntegralImage, x: i32, y: i32) -> f32 {
-    let width = SLOT_SIZE_I32;
-    let height = SLOT_SIZE_I32;
-    let mut values = [0.0; BORDER_SEGMENTS];
-    let mut index = 0;
-    let top = y - H_LINE_H / 2;
-    let bottom = y + height - H_LINE_H / 2;
-    let left = x - V_LINE_W / 2;
-    let right = x + width - V_LINE_W / 2;
-
-    for bin in 0..SEGMENT_BINS {
-        let (start, end) = segment_bounds(width, bin);
-        values[index] = integral.mean_rect(x + start, top, x + end, top + H_LINE_H);
-        values[index + 1] = integral.mean_rect(x + start, bottom, x + end, bottom + H_LINE_H);
-        index += 2;
-    }
-
-    let skip_start = (SEGMENT_BINS - V_SEGMENT_SKIP_CENTER_BINS) / 2;
-    let skip_end = skip_start + V_SEGMENT_SKIP_CENTER_BINS;
-    for bin in 0..SEGMENT_BINS {
-        if (skip_start..skip_end).contains(&bin) {
-            continue;
-        }
-        let (start, end) = segment_bounds(height, bin);
-        values[index] = integral.mean_rect(left, y + start, left + V_LINE_W, y + end);
-        values[index + 1] = integral.mean_rect(right, y + start, right + V_LINE_W, y + end);
-        index += 2;
-    }
-    debug_assert_eq!(index, BORDER_SEGMENTS);
-
-    // Once ordered by luma, the segments nearest the median form one contiguous
-    // range. Trim the farther end eight times instead of sorting by deviation.
-    values.sort_unstable_by(f32::total_cmp);
-    let median = median_sorted(&values);
-    let mut first = 0;
-    let mut last = values.len();
-    for _ in 0..BORDER_UNIFORMITY_TRIM {
-        if median - values[first] > values[last - 1] - median {
-            first += 1;
-        } else {
-            last -= 1;
-        }
-    }
-
-    let retained = &values[first..last];
-    debug_assert_eq!(retained.len(), BORDER_UNIFORMITY_RETAINED);
-    let center = median_sorted(retained).max(BORDER_UNIFORMITY_LUMA_FLOOR);
-    let (sum, sum_sq) = retained.iter().fold((0.0, 0.0), |(sum, sum_sq), &value| {
-        (sum + value, sum_sq + value * value)
-    });
-    let count = retained.len() as f32;
-    let mean = sum / count;
-    let relative_std = (sum_sq / count - mean * mean).max(0.0).sqrt() / center;
-    let t = ((relative_std - BORDER_UNIFORMITY_GOOD)
-        / (BORDER_UNIFORMITY_BAD - BORDER_UNIFORMITY_GOOD))
-        .clamp(0.0, 1.0);
-    let penalty = t * t * (3.0 - 2.0 * t);
-    1.0 - BORDER_UNIFORMITY_MAX_PENALTY * penalty
-}
-
-fn median_sorted(values: &[f32]) -> f32 {
+fn median_sorted_f32(values: &[f32]) -> f32 {
     let mid = values.len() / 2;
     if values.len().is_multiple_of(2) {
         0.5 * (values[mid - 1] + values[mid])
@@ -527,413 +997,75 @@ fn median_sorted(values: &[f32]) -> f32 {
     }
 }
 
-fn segment_bounds(length: i32, bin: usize) -> (i32, i32) {
-    let scale = length as f32 / SEGMENT_BINS as f32;
-    (
-        (bin as f32 * scale).round() as i32,
-        ((bin + 1) as f32 * scale).round() as i32,
-    )
-}
-
-impl ProfileLookup {
-    fn new(integral: &IntegralImage, profile: &Profile) -> Self {
-        let started = Instant::now();
-        let width = integral.width;
-        let h_y_min = profile.y_min - EDGE_BAND;
-        let h_y_max = profile.y_max + SLOT_SIZE_I32 + EDGE_BAND;
-        let h_lines: Vec<LineScores> = profile
-            .cols
-            .par_iter()
-            .map(|x| build_horizontal_line_scores(integral, *x, h_y_min, h_y_max))
-            .collect();
-
-        let mut h_x_to_index = vec![None; width];
-        for (index, line) in h_lines.iter().enumerate() {
-            h_x_to_index[line.pos as usize] = Some(index);
-        }
-
-        let mut v_positions = Vec::new();
-        for x in profile.cols {
-            for edge_x in [x, x + SLOT_SIZE_I32] {
-                v_positions.extend(edge_x - EDGE_BAND..=edge_x + EDGE_BAND);
-            }
-        }
-        v_positions.sort_unstable();
-        v_positions.dedup();
-
-        let v_lines: Vec<LineScores> = v_positions
-            .par_iter()
-            .map(|x| build_vertical_line_scores(integral, *x, profile))
-            .collect();
-        let mut v_x_to_index = vec![None; width];
-        for (index, line) in v_lines.iter().enumerate() {
-            v_x_to_index[line.pos as usize] = Some(index);
-        }
-
-        debug!(
-            h_lines = h_lines.len(),
-            v_lines = v_lines.len(),
-            elapsed = ?started.elapsed(),
-            "geometry profile lookup built"
-        );
-
-        Self {
-            h_lines,
-            h_x_to_index,
-            v_x_to_index,
-            v_lines,
-        }
-    }
-
-    fn horizontal_edge_score(&self, x: i32, y: i32) -> f32 {
-        let Some(Some(index)) = self.h_x_to_index.get(x as usize) else {
-            return 0.0;
-        };
-        let line = &self.h_lines[*index];
-        let center = line.score_at(y);
-        let neighbor = line
-            .score_at(y - EDGE_BAND)
-            .max(line.score_at(y + EDGE_BAND));
-        center_biased_band_score(center, neighbor, H_EDGE_CENTER_WEIGHT)
-    }
-
-    fn vertical_edge_score(&self, x: i32, y: i32) -> f32 {
-        let mut best = f32::NEG_INFINITY;
-        let mut second = f32::NEG_INFINITY;
-        let mut count = 0usize;
-        for xx in x - EDGE_BAND..=x + EDGE_BAND {
-            let Some(Some(index)) = self.v_x_to_index.get(xx as usize) else {
-                continue;
-            };
-            push_top2(self.v_lines[*index].score_at(y), &mut best, &mut second);
-            count += 1;
-        }
-        topk2_mean(best, second, count).unwrap_or(0.0)
-    }
-}
-
-fn horizontal_score_at(integral: &IntegralImage, x: i32, y: i32) -> f32 {
-    response_to_score(
-        horizontal_response(integral, x, y),
-        H_RESPONSE_THR,
-        H_RESPONSE_HI,
-    )
-}
-
-fn vertical_score_at(integral: &IntegralImage, x: i32, y: i32) -> f32 {
-    response_to_score(
-        vertical_response(integral, x, y),
-        V_RESPONSE_THR,
-        V_RESPONSE_HI,
-    )
-}
-
-impl LineScores {
-    fn score_at(&self, position: i32) -> f32 {
-        let index = position - self.start;
-        if index < 0 {
-            return 0.0;
-        }
-        self.scores.get(index as usize).copied().unwrap_or(0.0)
-    }
-}
-
-fn build_horizontal_line_scores(
-    integral: &IntegralImage,
-    x: i32,
-    y_min: i32,
-    y_max: i32,
-) -> LineScores {
-    let mut scores = Vec::with_capacity((y_max - y_min + 1).max(0) as usize);
-    for y in y_min..=y_max {
-        scores.push(segmented_score_by_sampling_step(
-            SLOT_SIZE_I32,
-            H_SEGMENT_SAMPLE_STEP,
-            |offset| {
-                let px = x + offset;
-                horizontal_score_at(integral, px, y)
-            },
-        ));
-    }
-
-    LineScores {
-        pos: x,
-        start: y_min,
-        scores,
-    }
-}
-
-fn build_vertical_line_scores(integral: &IntegralImage, x: i32, profile: &Profile) -> LineScores {
-    let y_min = profile.y_min;
-    let y_max = profile.y_max;
-    let response_y_max = y_max + SLOT_SIZE_I32;
-    let mut response_scores = Vec::with_capacity((response_y_max - y_min + 1).max(0) as usize);
-    for y in y_min..=response_y_max {
-        response_scores.push(vertical_score_at(integral, x, y));
-    }
-
-    let mut prefix = Vec::with_capacity(response_scores.len() + 1);
-    prefix.push(0.0);
-    for score in response_scores {
-        prefix.push(prefix.last().copied().unwrap_or(0.0) + score);
-    }
-
-    let mut scores = Vec::with_capacity((y_max - y_min + 1).max(0) as usize);
-    for y in y_min..=y_max {
-        scores.push(segmented_score_from_prefix_masked(
-            &prefix,
-            y_min,
-            y,
-            SLOT_SIZE_I32,
-            V_SEGMENT_SKIP_CENTER_BINS,
-        ));
-    }
-
-    LineScores {
-        pos: x,
-        start: y_min,
-        scores,
-    }
-}
-
-fn center_biased_band_score(center: f32, neighbor: f32, center_weight: f32) -> f32 {
-    (center_weight * center + neighbor) / (center_weight + 1.0)
-}
-
-fn push_top2(value: f32, best: &mut f32, second: &mut f32) {
-    if value > *best {
-        *second = *best;
-        *best = value;
-    } else if value > *second {
-        *second = value;
-    }
-}
-
-fn topk2_mean(best: f32, second: f32, count: usize) -> Option<f32> {
-    if count == 0 {
-        None
-    } else if EDGE_BAND_TOPK <= 1 || count == 1 {
-        Some(best)
+fn median_sorted_f64(values: &[f64]) -> f64 {
+    let mid = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        0.5 * (values[mid - 1] + values[mid])
     } else {
-        Some((best + second) * 0.5)
+        values[mid]
     }
 }
 
-fn segmented_score_by_sampling_step<F>(length: i32, step: i32, mut sample: F) -> f32
-where
-    F: FnMut(i32) -> f32,
-{
-    let step = step.max(1);
-    segmented_score(length, |start, end| {
-        let mut sum = 0.0;
-        let mut count = 0usize;
-        for offset in (start..end).step_by(step as usize) {
-            sum += sample(offset);
+fn slot_from_native(left: f64, top: f64, side: f64, row: u32, col: u32, kind: SlotKind) -> Slot {
+    Slot {
+        x: left.round() as u32,
+        y: top.round() as u32,
+        w: side.round().max(1.0) as u32,
+        h: side.round().max(1.0) as u32,
+        center_x: (left + side * 0.5) as f32,
+        center_y: (top + side * 0.5) as f32,
+        row,
+        col,
+        kind,
+        classification: None,
+    }
+}
+
+fn list_columns(geometry: RoiGeometry) -> [f64; 4] {
+    LIST_COLS.map(|x| geometry.logical_origin_x + x as f64 * geometry.scale)
+}
+
+fn home_columns(geometry: RoiGeometry) -> [f64; 4] {
+    HOME_COLS.map(|x| geometry.logical_origin_x + x as f64 * geometry.scale)
+}
+
+fn round_ties_even(value: f64) -> i32 {
+    value.round_ties_even() as i32
+}
+
+fn slot_has_content(image: &RgbaImage, slot: &Slot) -> bool {
+    let inset_x = (slot.w as f32 * HOME_CONTENT_INSET_RATIO).round() as u32;
+    let inset_y = (slot.h as f32 * HOME_CONTENT_INSET_RATIO).round() as u32;
+    let x0 = slot.x.saturating_add(inset_x);
+    let y0 = slot.y.saturating_add(inset_y);
+    let x1 = slot
+        .x
+        .saturating_add(slot.w)
+        .saturating_sub(inset_x)
+        .min(image.width());
+    let y1 = slot
+        .y
+        .saturating_add(slot.h)
+        .saturating_sub(inset_y)
+        .min(image.height());
+    if x0 >= x1 || y0 >= y1 {
+        return false;
+    }
+
+    let mut sum = 0.0f32;
+    let mut sum_sq = 0.0f32;
+    let mut count = 0u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let [r, g, b, _] = image.get_pixel(x, y).0;
+            let value = color::luma601_u8(r, g, b) as f32 / 255.0;
+            sum += value;
+            sum_sq += value * value;
             count += 1;
         }
-        if count == 0 { 0.0 } else { sum / count as f32 }
-    })
-}
-
-fn segmented_score_from_prefix_masked(
-    prefix: &[f32],
-    base: i32,
-    start: i32,
-    length: i32,
-    skip_center_bins: usize,
-) -> f32 {
-    segmented_score_masked(length, skip_center_bins, |bin_start, bin_end| {
-        let y0 = (start + bin_start - base).max(0) as usize;
-        let y1 = (start + bin_end - base).clamp(0, prefix.len().saturating_sub(1) as i32) as usize;
-        if y1 <= y0 {
-            return 0.0;
-        }
-        (prefix[y1] - prefix[y0]) / (y1 - y0) as f32
-    })
-}
-
-fn segmented_score<F>(length: i32, bin_mean: F) -> f32
-where
-    F: FnMut(i32, i32) -> f32,
-{
-    segmented_score_masked(length, 0, bin_mean)
-}
-
-fn segmented_score_masked<F>(length: i32, skip_center_bins: usize, mut bin_mean: F) -> f32
-where
-    F: FnMut(i32, i32) -> f32,
-{
-    if length <= 0 {
-        return 0.0;
     }
-
-    let mut mean_score = 0.0;
-    let mut active = 0usize;
-    let mut used = 0usize;
-    let skip = skip_center_bins.min(SEGMENT_BINS.saturating_sub(1));
-    let skip_start = (SEGMENT_BINS - skip) / 2;
-    let skip_end = skip_start + skip;
-    for bin in 0..SEGMENT_BINS {
-        if skip > 0 && (skip_start..skip_end).contains(&bin) {
-            continue;
-        }
-        let (a, b) = segment_bounds(length, bin);
-        if b <= a {
-            continue;
-        }
-
-        let mean = bin_mean(a, b);
-        mean_score += mean;
-        used += 1;
-        if mean >= SEGMENT_MIN_BIN_SCORE {
-            active += 1;
-        }
-    }
-
-    let used = used.max(1);
-    let mean_score = mean_score / used as f32;
-    let active_ratio = active as f32 / used as f32;
-    (0.65 * mean_score + 0.35 * active_ratio).clamp(0.0, 1.0)
-}
-
-fn resize_l8_lanczos(src: GrayImage, dst_w: u32, dst_h: u32) -> Result<GrayImage> {
-    if src.width() == dst_w && src.height() == dst_h {
-        return Ok(src);
-    }
-
-    let mut destination = GrayImage::new(dst_w, dst_h);
-    let options =
-        ResizeOptions::new().resize_alg(ResizeAlg::Convolution(fir::FilterType::Lanczos3));
-    Resizer::new()
-        .resize(&src, &mut destination, &options)
-        .map_err(|e| anyhow::anyhow!("failed to FIR-resize L8 image: {e}"))?;
-    Ok(destination)
-}
-
-fn luma_canonical(rgba: &RgbaImage) -> Result<GrayImage> {
-    let width = rgba.width() as usize;
-    let mut raw = vec![0; width * rgba.height() as usize];
-    let (pixels, remainder) = rgba.as_raw().as_chunks::<4>();
-    debug_assert!(remainder.is_empty());
-    for (pixel, luma) in pixels.iter().zip(&mut raw) {
-        *luma = color::luma601_u8(pixel[0], pixel[1], pixel[2]);
-    }
-
-    let gray = GrayImage::from_raw(rgba.width(), rgba.height(), raw)
-        .ok_or_else(|| anyhow::anyhow!("failed to create grayscale ROI image"))?;
-    resize_l8_lanczos(gray, ROI_REFERENCE_W, ROI_REFERENCE_H)
-}
-
-fn horizontal_response(integral: &IntegralImage, x: i32, y: i32) -> f32 {
-    let side_offset = (H_LINE_H + H_SIDE_H) / 2;
-    let core = integral.mean_centered(x, y, H_WIN, H_LINE_H);
-    let above = integral.mean_centered(x, y - side_offset, H_WIN, H_SIDE_H);
-    let below = integral.mean_centered(x, y + side_offset, H_WIN, H_SIDE_H);
-    let (_, std) = integral.mean_std_centered(x, y, H_WIN, H_LINE_H + 2 * H_SIDE_H);
-    ((core - above).abs() + (core - below).abs()) / (2.0 * (std + Z_EPS))
-}
-
-fn vertical_response(integral: &IntegralImage, x: i32, y: i32) -> f32 {
-    let side_offset = (V_LINE_W + V_SIDE_W) / 2;
-    let core = integral.mean_centered(x, y, V_LINE_W, V_WIN);
-    let left = integral.mean_centered(x - side_offset, y, V_SIDE_W, V_WIN);
-    let right = integral.mean_centered(x + side_offset, y, V_SIDE_W, V_WIN);
-    let (_, std) = integral.mean_std_centered(x, y, V_LINE_W + 2 * V_SIDE_W, V_WIN);
-    ((core - left).abs() + (core - right).abs()) / (2.0 * (std + Z_EPS))
-}
-
-fn response_to_score(response: f32, threshold: f32, high: f32) -> f32 {
-    ((response - threshold) / (high - threshold).max(1e-6)).clamp(0.0, 1.0)
-}
-
-impl IntegralImage {
-    fn from_luma(luma: &GrayImage) -> Self {
-        let width = luma.width() as usize;
-        let height = luma.height() as usize;
-        let values = luma.as_raw();
-        let stride = width + 1;
-        let scale = 1.0 / 255.0;
-        let mut sum = vec![0.0; (width + 1) * (height + 1)];
-        let mut sum_sq = vec![0.0; (width + 1) * (height + 1)];
-
-        for (y, row) in values.chunks_exact(width).enumerate() {
-            let mut row_sum = 0.0;
-            let mut row_sum_sq = 0.0;
-            for (x, &value) in row.iter().enumerate() {
-                let value = value as f32 * scale;
-                row_sum += value;
-                row_sum_sq += value * value;
-                let idx = (y + 1) * stride + x + 1;
-                sum[idx] = sum[y * stride + x + 1] + row_sum;
-                sum_sq[idx] = sum_sq[y * stride + x + 1] + row_sum_sq;
-            }
-        }
-
-        Self {
-            width,
-            height,
-            sum,
-            sum_sq,
-        }
-    }
-
-    fn mean_centered(&self, x: i32, y: i32, width: i32, height: i32) -> f32 {
-        let (sum, count) = self.rect_sum_centered(&self.sum, x, y, width, height);
-        sum / count.max(1) as f32
-    }
-
-    fn mean_std_centered(&self, x: i32, y: i32, width: i32, height: i32) -> (f32, f32) {
-        let (sum, count) = self.rect_sum_centered(&self.sum, x, y, width, height);
-        let (sum_sq, _) = self.rect_sum_centered(&self.sum_sq, x, y, width, height);
-        let count = count.max(1) as f32;
-        let mean = sum / count;
-        let variance = (sum_sq / count - mean * mean).max(0.0);
-        (mean, variance.sqrt())
-    }
-
-    fn mean_rect(&self, x0: i32, y0: i32, x1: i32, y1: i32) -> f32 {
-        let (sum, count) = self.rect_sum(&self.sum, x0, y0, x1, y1);
-        sum / count.max(1) as f32
-    }
-
-    fn rect_sum_centered(
-        &self,
-        table: &[f32],
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-    ) -> (f32, u32) {
-        let x0 = (x - width / 2).clamp(0, self.width as i32);
-        let y0 = (y - height / 2).clamp(0, self.height as i32);
-        self.rect_sum(table, x0, y0, x0 + width, y0 + height)
-    }
-
-    fn rect_sum(&self, table: &[f32], x0: i32, y0: i32, x1: i32, y1: i32) -> (f32, u32) {
-        let x0 = x0.clamp(0, self.width as i32) as usize;
-        let y0 = y0.clamp(0, self.height as i32) as usize;
-        let x1 = x1.clamp(0, self.width as i32) as usize;
-        let y1 = y1.clamp(0, self.height as i32) as usize;
-        if x1 <= x0 || y1 <= y0 {
-            return (0.0, 0);
-        }
-
-        let stride = self.width + 1;
-        let sum = table[y1 * stride + x1] - table[y0 * stride + x1] - table[y1 * stride + x0]
-            + table[y0 * stride + x0];
-        (sum, ((x1 - x0) * (y1 - y0)) as u32)
-    }
-}
-
-fn slot_has_content(integral: &IntegralImage, x: i32, y: i32) -> bool {
-    let content_size = SLOT_SIZE_I32 - 2 * HOME_CONTENT_INSET;
-    let center_offset = SLOT_SIZE_I32 / 2;
-    let (mean, std) = integral.mean_std_centered(
-        x + center_offset,
-        y + center_offset,
-        content_size,
-        content_size,
-    );
+    let mean = sum / count as f32;
+    let std = (sum_sq / count as f32 - mean * mean).max(0.0).sqrt();
     std / mean.max(HOME_CONTENT_MEAN_FLOOR) >= HOME_CONTENT_MIN_RELATIVE_STD
 }
 
@@ -941,21 +1073,41 @@ fn home_booster_kind(rgba: &RgbaImage, rect: ImageRect) -> SlotKind {
     let width = rect.w.min(rgba.width().saturating_sub(rect.x));
     let height = rect.h.min(rgba.height().saturating_sub(rect.y));
     let mut yellow_pixels = 0u32;
-    let mut mask_pixels = 0u32;
+    let mut content_pixels = 0u32;
+    let mut ring_yellow_pixels = 0u32;
+    let mut ring_pixels = 0u32;
+    let mut core_dark_pixels = 0u32;
+    let mut core_pixels = 0u32;
 
     for local_y in 0..height {
-        let span = booster_hex_row_span(local_y, width, height);
-        mask_pixels += span.end - span.start;
-        for local_x in span {
+        let content = booster_hex_row_span(local_y, width, height, BOOSTER_CONTENT_SCALE);
+        let ring_inner = booster_hex_row_span(local_y, width, height, BOOSTER_RING_INNER_SCALE);
+        let core = booster_hex_row_span(local_y, width, height, BOOSTER_CORE_SCALE);
+        content_pixels += content.end - content.start;
+        for local_x in content {
             let [r, g, b, _] = rgba.get_pixel(rect.x + local_x, rect.y + local_y).0;
-            if color::booster_yellow_likeness(r, g, b) >= 0.5 {
+            let yellow = color::is_booster_yellow(r, g, b);
+            if yellow {
                 yellow_pixels += 1;
+            }
+            if !ring_inner.contains(&local_x) {
+                ring_pixels += 1;
+                ring_yellow_pixels += u32::from(yellow);
+            }
+            if core.contains(&local_x) {
+                core_pixels += 1;
+                core_dark_pixels +=
+                    u32::from(color::luma601_u8(r, g, b) <= HOME_BOOSTER_MAX_CORE_LUMA);
             }
         }
     }
 
-    if mask_pixels > 0
-        && (yellow_pixels as f32) >= mask_pixels as f32 * HOME_BOOSTER_MIN_YELLOW_RATIO
+    if content_pixels > 0
+        && ring_pixels > 0
+        && core_pixels > 0
+        && yellow_pixels as f32 >= content_pixels as f32 * HOME_BOOSTER_MIN_YELLOW_RATIO
+        && ring_yellow_pixels as f32 >= ring_pixels as f32 * HOME_BOOSTER_MIN_RING_YELLOW_RATIO
+        && core_dark_pixels as f32 >= core_pixels as f32 * HOME_BOOSTER_MIN_CORE_DARK_RATIO
     {
         SlotKind::HomeBooster
     } else {
@@ -963,16 +1115,17 @@ fn home_booster_kind(rgba: &RgbaImage, rect: ImageRect) -> SlotKind {
     }
 }
 
-fn booster_hex_row_span(local_y: u32, width: u32, height: u32) -> std::ops::Range<u32> {
+fn booster_hex_row_span(local_y: u32, width: u32, height: u32, scale: f32) -> std::ops::Range<u32> {
     const SQRT_3: f32 = 1.732_050_8;
 
     let y = (local_y as f32 + 0.5) / height as f32;
     let dy = (y - BOOSTER_HEX_CENTER_Y).abs();
-    if dy > 0.5 * SQRT_3 * BOOSTER_CONTENT_SIDE_LEN {
+    let side_len = BOOSTER_HEX_SIDE_LEN * scale;
+    if dy > 0.5 * SQRT_3 * side_len {
         return 0..0;
     }
 
-    let half_width = BOOSTER_CONTENT_SIDE_LEN - dy / SQRT_3;
+    let half_width = side_len - dy / SQRT_3;
     let width = width as f32;
     let left = ((BOOSTER_HEX_CENTER_X - half_width) * width)
         .floor()

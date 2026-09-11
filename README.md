@@ -6,12 +6,6 @@ HD2 Preset Helper is a lightweight Windows utility for saving and applying loado
 
 The program recognizes the game interface through screen capture and completes selections using standard mouse and keyboard input. It does not modify game files, inject code into the game process, read game memory, or alter network traffic.
 
-> [!WARNING]
-> **Stratagem icon replacement mods are not currently supported.** Replacing the original Stratagem icons will prevent the tool from recognizing them correctly.
->
-> I'm currently looking into ways to support modified icons.
-
-
 ## Download and install
 
 1. Download the latest ZIP from [GitHub Releases](../../releases/latest).
@@ -65,7 +59,8 @@ Keep the application in a writable folder. It creates and uses the following
 runtime files beside the executable:
 
 - `data/config.toml` — hotkeys, overlay settings, and optional behavior.
-- `data/presets.json` — saved presets.
+- `data/presets.json` — saved preset metadata.
+- `data/local_templates/` — icon samples captured with each preset.
 - `data/app.log` — diagnostic log from the latest launch.
 
 The default keys can be changed in `data/config.toml` if they conflict with
@@ -74,8 +69,6 @@ in-game controls and do not need to be edited manually.
 
 Selection order and automatic ready-up can also be toggled from the tray menu.
 Changes are saved to `data/config.toml`.
-
-> Preset labels require v0.1.4-rc.1 or later.
 
 Optional overlay labels can be added in `data/config.toml`:
 
@@ -116,6 +109,3 @@ endorsed by Arrowhead Game Studios or Sony Interactive Entertainment.
 
 The source code is licensed under the
 [GNU General Public License version 3 or later](LICENSE).
-
-Game-related names and visual assets are not covered by the GPL. See
-[ASSETS.md](ASSETS.md) for details and rights-holder contact information.

@@ -6,12 +6,6 @@ HD2 Preset Helper 是一款适用于《绝地潜兵 2》的 Windows 配装预设
 
 程序通过屏幕捕获识别游戏界面，再模拟正常的鼠标和键盘操作完成选择。它不会修改游戏文件、向游戏进程注入代码、读取游戏内存或更改网络流量。程序没有联网功能，所有识别和操作均在本地完成。
 
-> [!WARNING]
-> **目前暂不支持替换战略配备图标的 Mod。** 如果原版战略配备图标被替换，程序将无法正确识别。
->
-> 目前正在尝试寻找兼容修改后图标的方案。
-
-
 ## 下载与安装
 
 1. 前往 [GitHub Releases](../../releases/latest) 下载最新版本的 ZIP 压缩包。
@@ -52,14 +46,13 @@ HD2 Preset Helper 是一款适用于《绝地潜兵 2》的 Windows 配装预设
 请将程序放在具有写入权限的文件夹中。运行时会使用以下文件：
 
 - `data/config.toml`：快捷键、预设浮窗及其他可选设置；
-- `data/presets.json`：已经保存的预设；
+- `data/presets.json`：保存的预设信息；
+- `data/local_templates/`：随预设保存的图标样本；
 - `data/app.log`：最近一次启动产生的诊断日志。
 
 如果默认快捷键与其他程序或系统快捷键冲突，可以在 `data/config.toml` 中修改。预设通常直接通过游戏内操作保存，不需要手动编辑 `data/presets.json`。
 
 选择顺序和自动准备也可以在托盘菜单中切换，修改会保存到 `data/config.toml`。
-
-> 预设标签需要 v0.1.4-rc.1 或更高版本。
 
 可以在 `data/config.toml` 中添加浮窗标签：
 
@@ -110,5 +103,3 @@ target\release\HD2PresetHelper.exe
 HD2 Preset Helper 是非官方第三方工具，与 Arrowhead Game Studios 或 Sony Interactive Entertainment 没有从属关系，也未获得其认可或背书。
 
 本项目的源代码采用 [GNU General Public License version 3 or later](LICENSE) 许可。
-
-与游戏相关的名称和视觉素材不属于 GPL 许可范围。有关详细说明及权利人联系方式，请参阅 [ASSETS.md](ASSETS.md)。

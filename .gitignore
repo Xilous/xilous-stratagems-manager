@@ -5,7 +5,10 @@
 /debug/
 /data/debug/
 /data/app.log
+/data/diagnostics/
+/data/wgc-f16/
 /data/presets.json
+/data/local_templates/
 
 # Local release packages
 /dist/

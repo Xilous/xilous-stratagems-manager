@@ -2,17 +2,25 @@ use anyhow::Result;
 use image::RgbaImage;
 
 use crate::capture::{CaptureRegion, CaptureSource};
-use crate::vision::{Calibration, luma601_u8, resolve_calibration_roi_for_size};
+use crate::vision::{Calibration, RoiGeometry, luma601_u8, resolve_calibration_roi_for_size};
 
 const ROI_FINGERPRINT_SAMPLES: u32 = 32;
+
+pub struct BoundLoadoutRegion<'a> {
+    pub region: CaptureRegion<'a>,
+    pub geometry: RoiGeometry,
+}
 
 pub fn bind_loadout_region<'a>(
     capture: &'a mut CaptureSource,
     calibration: &Calibration,
-) -> Result<CaptureRegion<'a>> {
+) -> Result<BoundLoadoutRegion<'a>> {
     let (image_w, image_h) = capture.output_size();
-    let roi = resolve_calibration_roi_for_size(image_w, image_h, calibration)?;
-    Ok(capture.region(roi))
+    let resolved = resolve_calibration_roi_for_size(image_w, image_h, calibration)?;
+    Ok(BoundLoadoutRegion {
+        region: capture.region(resolved.rect),
+        geometry: resolved.geometry,
+    })
 }
 
 pub fn image_fingerprint(rgba: &RgbaImage) -> Vec<u8> {

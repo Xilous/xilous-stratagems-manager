@@ -8,9 +8,10 @@ use tracing::{debug, debug_span, trace};
 
 use crate::automation::AutomationSession;
 use crate::item::ItemKind;
-use crate::preset::Preset;
+use crate::preset::CapturedPreset;
 use crate::vision::{
-    RecognizerRuntime, RoiObservation, Slot, SlotKind, SlotLayout, icon_likeness, luma601_u8,
+    RecognizerSession, RoiObservation, Slot, SlotKind, SlotLayout, TEMPLATE_PHYSICAL_SIZE_LOGICAL,
+    crop_booster_sample, crop_slot_sample, icon_likeness, luma601_u8,
 };
 
 pub use direct_select::{apply_booster_from_home, apply_empty_loadout_preset};
@@ -18,7 +19,6 @@ pub use frame::bind_loadout_region;
 
 use self::frame::fingerprint_distance;
 
-const UI_TRANSITION_DELAY: Duration = Duration::from_millis(150);
 const UI_STATE_STABLE_DISTANCE: f32 = 3.0;
 const UI_HOME_Y_STABLE_DISTANCE: f32 = 4.0;
 const SLOT_FINGERPRINT_GRID: u32 = 8;
@@ -72,17 +72,23 @@ pub fn detect_ui_state(result: &RoiObservation) -> UiState {
     }
 }
 
-pub fn collect_current_preset(result: &RoiObservation) -> Result<Preset> {
-    let stratagems = collect_home_stratagems(result)?;
-    let booster = collect_home_booster(result)?;
+pub fn collect_current_preset(
+    result: &RoiObservation,
+    template_scale: f32,
+) -> Result<CapturedPreset> {
+    let stratagems = collect_home_stratagems(result, template_scale)?;
+    let booster = collect_home_booster(result, template_scale)?;
 
-    Ok(Preset {
+    Ok(CapturedPreset {
         stratagems,
         booster,
     })
 }
 
-fn collect_home_stratagems(result: &RoiObservation) -> Result<Vec<String>> {
+fn collect_home_stratagems(
+    result: &RoiObservation,
+    stratagem_template_scale: f32,
+) -> Result<Vec<crate::vision::ImageSample>> {
     let (stratagems, _) = find_home_row(result).context("missing home loadout row")?;
     let mut items = Vec::with_capacity(stratagems.len());
 
@@ -90,11 +96,8 @@ fn collect_home_stratagems(result: &RoiObservation) -> Result<Vec<String>> {
         if slot.kind != SlotKind::Stratagem {
             bail!("home stratagem slot {col} is empty");
         }
-        let classification = slot
-            .classification
-            .as_ref()
-            .with_context(|| format!("home stratagem slot {col} is not classified"))?;
-        items.push(classification.item_id.clone());
+        let physical_size = TEMPLATE_PHYSICAL_SIZE_LOGICAL * stratagem_template_scale;
+        items.push(crop_slot_sample(&result.image, slot, physical_size)?);
     }
 
     Ok(items)
@@ -102,20 +105,20 @@ fn collect_home_stratagems(result: &RoiObservation) -> Result<Vec<String>> {
 
 pub fn scan_loadout_home(
     automation: &mut AutomationSession<'_>,
-    runtime: &RecognizerRuntime,
+    recognizer: RecognizerSession,
 ) -> Result<RoiObservation> {
     let image = automation.capture()?;
-    runtime.recognize(image, SlotLayout::Home)
+    recognizer.detect(image, SlotLayout::Home)
 }
 
-pub fn wait_for_ui_state(
+fn wait_for_stable_ui_state(
     automation: &mut AutomationSession<'_>,
-    runtime: &RecognizerRuntime,
+    recognizer: RecognizerSession,
     target_state: UiState,
     timeout: Duration,
-) -> Result<RoiObservation> {
+) -> Result<Option<RoiObservation>> {
     let span = debug_span!(
-        "wait_for_ui_state",
+        "wait_for_stable_ui_state",
         target_state = %target_state.label(),
         timeout = ?timeout
     );
@@ -129,15 +132,13 @@ pub fn wait_for_ui_state(
     };
 
     let start = Instant::now();
-    std::thread::sleep(UI_TRANSITION_DELAY);
-
     let mut stable_candidate: Option<UiStabilitySignature> = None;
     let mut attempt = 0usize;
 
     loop {
         attempt += 1;
         let image = automation.capture()?;
-        let result = runtime.detect(image, expected_layout)?;
+        let result = recognizer.detect(image, expected_layout)?;
         let current_state = detect_ui_state(&result);
 
         if current_state == target_state {
@@ -156,7 +157,7 @@ pub fn wait_for_ui_state(
                         elapsed = ?start.elapsed(),
                         "target UI state stabilized"
                     );
-                    return Ok(result);
+                    return Ok(Some(result));
                 }
 
                 trace!(
@@ -187,12 +188,14 @@ pub fn wait_for_ui_state(
         );
 
         if start.elapsed() >= timeout {
-            bail!(
-                "timed out waiting for {} UI state; last_state={}, last_slot_count={}",
-                target_state.label(),
-                current_state.label(),
-                result.slots.len()
+            debug!(
+                target_state = %target_state.label(),
+                last_state = %current_state.label(),
+                last_slot_count = result.slots.len(),
+                elapsed = ?start.elapsed(),
+                "timed out waiting for stable UI state"
             );
+            return Ok(None);
         }
     }
 }
@@ -311,11 +314,6 @@ pub fn home_booster_slot(result: &RoiObservation) -> Option<&Slot> {
     find_home_row(result).map(|(_stratagems, booster)| booster)
 }
 
-pub fn home_booster_needs_warning(result: &RoiObservation) -> bool {
-    home_booster_slot(result)
-        .is_some_and(|slot| slot.kind == SlotKind::HomeBooster && slot.classification.is_none())
-}
-
 fn is_slot_list(result: &RoiObservation, item_kind: ItemKind) -> bool {
     let mut rows = result
         .slots
@@ -331,16 +329,20 @@ fn is_slot_list(result: &RoiObservation, item_kind: ItemKind) -> bool {
     }
 }
 
-fn collect_home_booster(result: &RoiObservation) -> Result<Option<String>> {
+fn collect_home_booster(
+    result: &RoiObservation,
+    template_scale: f32,
+) -> Result<Option<crate::vision::ImageSample>> {
     let Some(slot) = home_booster_slot(result) else {
         return Ok(None);
     };
 
     debug_assert!(slot.kind.is_home_booster());
-    Ok(slot
-        .classification
-        .as_ref()
-        .map(|classification| classification.item_id.clone()))
+    if slot.kind == SlotKind::HomeBoosterEmpty {
+        return Ok(None);
+    }
+    let physical_size = TEMPLATE_PHYSICAL_SIZE_LOGICAL * template_scale;
+    crop_booster_sample(&result.image, slot, physical_size).map(Some)
 }
 
 fn find_home_row(result: &RoiObservation) -> Option<([&Slot; 4], &Slot)> {

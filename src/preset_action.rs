@@ -1,22 +1,27 @@
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use tracing::{debug, info, info_span, warn};
+use tracing::{debug, info, info_span};
 
 use crate::app_events::{AppEvent, AppEventSink};
 use crate::automation::AutomationSession;
 use crate::capture::CaptureSessionManager;
+use crate::color_normalization::ColorNormalizer;
+use crate::game_settings::read_color_settings;
 use crate::game_window::find_game_window;
 use crate::input;
 use crate::loadout::{
     UiState, apply_booster_from_home, apply_empty_loadout_preset, bind_loadout_region,
-    collect_current_preset, detect_ui_state, home_booster_needs_warning, scan_loadout_home,
-    wait_for_ui_state,
+    collect_current_preset, detect_ui_state, scan_loadout_home,
 };
 use crate::permissions;
-use crate::preset::{Preset, invalid_preset_reason, load_preset, save_preset};
-use crate::vision::RecognizerRuntime;
+use crate::preset::{
+    CapturedPreset, Preset, invalid_preset_reason, load_preset, save_captured_preset,
+};
+#[cfg(feature = "diagnostics")]
+use crate::vision::log_home_tone;
+use crate::vision::{RecognizerRuntime, RecognizerSession, RoiObservation};
 
 const READY_UP_HOLD_MS: u64 = 45;
 
@@ -83,14 +88,19 @@ pub fn handle_preset_hotkey(
         elapsed = ?capture_start.elapsed(),
         "capture session ready"
     );
-    let region = bind_loadout_region(capture, runtime.calibration())
+    let game_color_settings =
+        read_color_settings().context("failed to read Helldivers color settings")?;
+    let color_normalizer = ColorNormalizer::new(game_color_settings, capture.display_color_info())
+        .context("failed to configure UI color normalization")?;
+    let bound_region = bind_loadout_region(capture, runtime.calibration())
         .context("failed to bind loadout capture region")?;
-    let mut automation = AutomationSession::new(region, game_window)
+    let recognizer = runtime.bind(bound_region.geometry);
+    let mut automation = AutomationSession::new(bound_region.region, game_window, color_normalizer)
         .context("failed to start automation session")?;
 
     let (initial_result, ui_state) = {
-        let initial_result =
-            scan_loadout_home(&mut automation, runtime).context("failed to scan loadout home")?;
+        let initial_result = scan_loadout_home(&mut automation, recognizer)
+            .context("failed to scan loadout home")?;
         let ui_state = detect_ui_state(&initial_result);
         debug!(ui_state = %ui_state.label(), "detected loadout UI state");
         config.events.emit(AppEvent::UiStateDetected {
@@ -99,20 +109,17 @@ pub fn handle_preset_hotkey(
         (initial_result, ui_state)
     };
 
-    let (outcome, ready_up_after_apply, completion_warning) = match ui_state {
+    #[cfg(feature = "diagnostics")]
+    if matches!(ui_state, UiState::HomeFilled | UiState::HomeEmpty) {
+        log_home_tone(&initial_result);
+    }
+
+    let (outcome, ready_up_after_apply) = match ui_state {
         UiState::HomeFilled => {
-            let booster_needs_warning = home_booster_needs_warning(&initial_result);
-            let preset = collect_current_preset(&initial_result)
+            let captured = collect_current_preset(&initial_result, recognizer.ui_scale())
                 .context("failed to collect current preset")?;
-            save_current_preset(config, preset_name, &preset)?;
-            let warning = booster_needs_warning.then(|| {
-                warn!(
-                    preset = %preset_name,
-                    "home booster appears filled but was not recognized; preset saved without a booster"
-                );
-                "Booster not recognized; saved without it".to_string()
-            });
-            (PresetActionOutcome::Saved, false, warning)
+            save_current_preset(config, preset_name, &captured)?;
+            (PresetActionOutcome::Saved, false)
         }
 
         UiState::HomeMixed => {
@@ -122,23 +129,25 @@ pub fn handle_preset_hotkey(
         }
 
         UiState::HomeEmpty => {
-            let preset = load_named_preset(runtime, config, preset_name)?;
+            let preset = load_named_preset(config, preset_name)?;
             debug!(
                 stratagem_count = preset.stratagems.len(),
                 booster_present = preset.booster.is_some(),
                 "applying preset from empty home"
             );
             log_preset_contents(&preset);
-            apply_empty_loadout_preset(
-                runtime,
+            let home = apply_empty_loadout_preset(
+                recognizer,
                 &mut automation,
                 config.events,
+                config.presets,
                 &preset.stratagems,
                 config.apply_in_saved_order,
             )
             .context("failed to apply stratagems from empty home")?;
-            apply_booster_if_present(runtime, &mut automation, config, &preset)?;
-            (PresetActionOutcome::Applied, preset.booster.is_some(), None)
+            let _stable_home =
+                apply_booster_if_present(recognizer, &mut automation, config, &preset, home)?;
+            (PresetActionOutcome::Applied, preset.booster.is_some())
         }
 
         UiState::List(_) | UiState::Unknown => {
@@ -147,20 +156,12 @@ pub fn handle_preset_hotkey(
     };
 
     if config.auto_ready_up && ready_up_after_apply {
-        wait_for_ui_state(
-            &mut automation,
-            runtime,
-            UiState::HomeFilled,
-            Duration::from_millis(1500),
-        )
-        .context("booster was selected but the loadout home did not stabilize before starting")?;
         debug!("booster preset applied; sending READY UP key");
         automation.tap_key(input::Key::B, READY_UP_HOLD_MS)?;
     }
 
     config.events.emit(AppEvent::PresetDone {
         preset: preset_name.to_string(),
-        warning: completion_warning,
     });
     info!(
         preset = %preset_name,
@@ -170,15 +171,11 @@ pub fn handle_preset_hotkey(
     Ok(outcome)
 }
 
-fn load_named_preset(
-    runtime: &RecognizerRuntime,
-    config: &PresetActionConfig<'_>,
-    preset_name: &str,
-) -> Result<Preset> {
+fn load_named_preset(config: &PresetActionConfig<'_>, preset_name: &str) -> Result<Preset> {
     let preset = load_preset(config.presets, preset_name)
         .with_context(|| format!("failed to load preset \"{preset_name}\""))?;
 
-    if let Some(reason) = invalid_preset_reason(&preset, runtime.icon_catalog().as_ref()) {
+    if let Some(reason) = invalid_preset_reason(config.presets, &preset) {
         bail!("preset \"{preset_name}\" is invalid: {reason}");
     }
 
@@ -188,21 +185,28 @@ fn load_named_preset(
 fn save_current_preset(
     config: &PresetActionConfig<'_>,
     preset_name: &str,
-    preset: &Preset,
+    captured: &CapturedPreset,
 ) -> Result<()> {
     debug!(
-        stratagem_count = preset.stratagems.len(),
-        booster_present = preset.booster.is_some(),
+        stratagem_count = captured.stratagems.len(),
+        booster_present = captured.booster.is_some(),
         "saving current preset"
     );
-    log_preset_contents(preset);
 
-    save_preset(config.presets, preset_name, preset)
+    let preset = save_captured_preset(config.presets, preset_name, captured)
         .with_context(|| format!("failed to save preset \"{preset_name}\""))?;
+    log_preset_contents(&preset);
     config.events.emit(AppEvent::PresetSaved {
         preset: preset_name.to_string(),
-        stratagems: preset.stratagems.clone(),
-        booster: preset.booster.clone(),
+        stratagems: preset
+            .stratagems
+            .iter()
+            .map(|template| template.path.clone())
+            .collect(),
+        booster: preset
+            .booster
+            .as_ref()
+            .map(|template| template.path.clone()),
     });
     info!(
         preset = %preset_name,
@@ -216,28 +220,39 @@ fn save_current_preset(
 }
 
 fn log_preset_contents(preset: &Preset) {
+    let stratagems = preset
+        .stratagems
+        .iter()
+        .map(|template| template.path.as_str())
+        .collect::<Vec<_>>();
     debug!(
-        stratagems = ?preset.stratagems,
+        ?stratagems,
         booster_present = preset.booster.is_some(),
-        booster_item = preset.booster.as_deref().unwrap_or(""),
+        booster_template = preset
+            .booster
+            .as_ref()
+            .map_or("", |template| template.path.as_str()),
         "preset contents"
     );
 }
 
 fn apply_booster_if_present(
-    runtime: &RecognizerRuntime,
+    recognizer: RecognizerSession,
     automation: &mut AutomationSession<'_>,
     config: &PresetActionConfig<'_>,
     preset: &Preset,
-) -> Result<()> {
+    home: RoiObservation,
+) -> Result<RoiObservation> {
     let Some(booster) = preset.booster.as_ref() else {
-        return Ok(());
+        return Ok(home);
     };
     apply_booster_from_home(
-        runtime,
+        recognizer,
         automation,
         config.events,
-        std::slice::from_ref(booster),
+        &home,
+        config.presets,
+        booster,
     )
     .context("failed to apply booster from home")
 }

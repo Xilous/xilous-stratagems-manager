@@ -1,18 +1,21 @@
 use anyhow::{Result, bail};
 use windows::Win32::Devices::Display::{
-    DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO,
     DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL, DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
-    DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
-    DISPLAYCONFIG_SDR_WHITE_LEVEL, DISPLAYCONFIG_SOURCE_DEVICE_NAME, DisplayConfigGetDeviceInfo,
-    GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig,
+    DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO, DISPLAYCONFIG_SDR_WHITE_LEVEL,
+    DISPLAYCONFIG_SOURCE_DEVICE_NAME, DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes,
+    QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig,
 };
 use windows::Win32::Foundation::{ERROR_SUCCESS, HWND, LUID, WIN32_ERROR};
+use windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, IDXGIOutput6};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFOEXW, MonitorFromWindow,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFOEXW, MonitorFromWindow,
 };
-use windows::core::HRESULT;
+use windows::core::{HRESULT, Interface};
 
-pub(super) fn query_sdr_white_level_for_window(hwnd: HWND) -> Result<u32> {
+use super::super::DisplayColorInfo;
+
+pub(super) fn query_color_info_for_window(hwnd: HWND) -> Result<DisplayColorInfo> {
     unsafe {
         let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         if monitor.is_invalid() {
@@ -23,6 +26,13 @@ pub(super) fn query_sdr_white_level_for_window(hwnd: HWND) -> Result<u32> {
         monitor_info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
         if !GetMonitorInfoW(monitor, &mut monitor_info.monitorInfo).as_bool() {
             bail!("GetMonitorInfoW failed for the target window monitor");
+        }
+        let hdr_active = query_hdr_active(monitor)?;
+        if !hdr_active {
+            return Ok(DisplayColorInfo {
+                hdr_active: false,
+                sdr_white_level: 1000,
+            });
         }
         let monitor_device = utf16_trim(&monitor_info.szDevice);
 
@@ -56,18 +66,32 @@ pub(super) fn query_sdr_white_level_for_window(hwnd: HWND) -> Result<u32> {
 
             let adapter_id = path.targetInfo.adapterId;
             let target_id = path.targetInfo.id;
-            let advanced_color = query_advanced_color_enabled(adapter_id, target_id)?;
-            let value = if advanced_color {
-                query_sdr_white_level(adapter_id, target_id)?.max(1)
-            } else {
-                1000
-            };
-
-            return Ok(value);
+            return Ok(DisplayColorInfo {
+                hdr_active: true,
+                sdr_white_level: query_sdr_white_level(adapter_id, target_id)?.max(1),
+            });
         }
 
         bail!("no active DisplayConfig path matches target window monitor {monitor_device:?}")
     }
+}
+
+unsafe fn query_hdr_active(monitor: HMONITOR) -> Result<bool> {
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }?;
+    let mut adapter_index = 0;
+    while let Ok(adapter) = unsafe { factory.EnumAdapters1(adapter_index) } {
+        let mut output_index = 0;
+        while let Ok(output) = unsafe { adapter.EnumOutputs(output_index) } {
+            if unsafe { output.GetDesc() }?.Monitor == monitor {
+                let output: IDXGIOutput6 = output.cast()?;
+                let color_space = unsafe { output.GetDesc1() }?.ColorSpace;
+                return Ok(color_space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
+            }
+            output_index += 1;
+        }
+        adapter_index += 1;
+    }
+    bail!("no DXGI output matches the target window monitor")
 }
 
 unsafe fn query_source_name(adapter_id: LUID, source_id: u32) -> Result<String> {
@@ -97,24 +121,6 @@ unsafe fn query_sdr_white_level(adapter_id: LUID, target_id: u32) -> Result<u32>
     )?;
 
     Ok(white.SDRWhiteLevel)
-}
-
-unsafe fn query_advanced_color_enabled(adapter_id: LUID, target_id: u32) -> Result<bool> {
-    let mut info = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO::default();
-
-    info.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-    info.header.size = std::mem::size_of::<DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO>() as u32;
-    info.header.adapterId = adapter_id;
-    info.header.id = target_id;
-
-    let err_code = unsafe { DisplayConfigGetDeviceInfo(&mut info.header) };
-    win32_i32_to_result(
-        err_code,
-        "DisplayConfigGetDeviceInfo(GET_ADVANCED_COLOR_INFO) failed",
-    )?;
-
-    let value = unsafe { info.Anonymous.value };
-    Ok((value & 0x2) != 0)
 }
 
 fn win32_error_to_result(error: WIN32_ERROR, message: &'static str) -> Result<()> {

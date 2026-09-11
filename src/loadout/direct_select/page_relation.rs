@@ -6,8 +6,8 @@ use super::ScrollDirection;
 // Explicit page turns start from a clean pre-input page, so only a small
 // geometry jitter allowance is needed to distinguish zero movement.
 const PAGE_SHIFT_JITTER_PX: f32 = 2.0;
-// A full list turn moves content about 338 px in the 832 px reference ROI.
-const PAGE_TURN_SHIFT_REFERENCE_PX: f32 = 338.0;
+// A full list turn moves content about 253.5 px in the 624 px reference ROI.
+const PAGE_TURN_SHIFT_REFERENCE_PX: f32 = 253.5;
 pub(super) const PAGE_TURN_SHORT_THRESHOLD_RATIO: f32 = 0.80;
 
 #[derive(Debug)]

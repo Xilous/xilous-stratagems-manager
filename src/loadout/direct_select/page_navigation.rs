@@ -1,23 +1,24 @@
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use image::RgbaImage;
 use tracing::{debug, debug_span, trace};
 
 use crate::automation::AutomationSession;
 use crate::item::ItemKind;
-use crate::vision::{RecognizerRuntime, RoiObservation, SlotLayout};
+use crate::vision::{
+    RecognizerSession, RoiObservation, SlotLayout, TemplateClassifier, TemplateMatchCandidate,
+    luma601_u8, slot_core_rect,
+};
 
 use super::super::frame::{fingerprint_distance, image_fingerprint};
 
 use super::ScrollDirection;
 use super::page_relation::{PAGE_TURN_SHORT_THRESHOLD_RATIO, PageRelation, compare_page_turn};
 
-const PAGE_TURN_NO_MOVEMENT_GRACE: Duration = Duration::from_millis(700);
-const PAGE_TURN_DECISION_TIMEOUT: Duration = Duration::from_millis(1200);
-const PAGE_TURN_HARD_TIMEOUT: Duration = Duration::from_secs(4);
-const PAGE_TURN_MIN_SEMANTIC_OBSERVATIONS: usize = 3;
-const PAGE_TURN_NO_MOVEMENT_FRAMES: usize = 3;
+const PAGE_TURN_NO_MOVEMENT_GRACE: Duration = Duration::from_millis(250);
+const PAGE_BOUNDARY_NUDGE_NO_MOVEMENT_GRACE: Duration = Duration::from_millis(200);
+const PAGE_TURN_NO_MOVEMENT_FRAMES: usize = 2;
 const PAGE_CHANGE_THRESHOLD: f32 = 6.0;
 const PAGE_WHEEL_DELTA: i32 = 600;
 const PAGE_BOUNDARY_PROBE_DELTA: i32 = 120;
@@ -25,11 +26,25 @@ const PAGE_BOUNDARY_PROBE_DELTA: i32 = 120;
 pub(super) struct PageSnapshot {
     pub(super) roi: RoiObservation,
     pub(super) signature: Vec<u8>,
+    pub(super) match_candidates: Vec<TemplateMatchCandidate>,
+    pub(super) slot_luma: Vec<SlotLuma>,
 }
 
-pub(super) struct PageNavigator<'a> {
-    runtime: &'a RecognizerRuntime,
+#[derive(Clone)]
+pub(super) struct SlotLuma {
+    pub(super) row: u32,
+    pub(super) col: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) center_x: f32,
+    pub(super) center_y: f32,
+    pub(super) pixels: Vec<u8>,
+}
+
+pub(super) struct PageNavigator {
+    recognizer: RecognizerSession,
     item_kind: ItemKind,
+    classifier: TemplateClassifier,
 }
 
 pub(super) enum PageTurnResult {
@@ -40,13 +55,13 @@ pub(super) enum PageTurnResult {
 #[derive(Clone, Copy, Debug)]
 pub(super) enum PageTurnInput {
     Full(ScrollDirection),
-    Probe(ScrollDirection),
+    Nudge(ScrollDirection),
 }
 
 impl PageTurnInput {
     pub(super) const fn direction(self) -> ScrollDirection {
         match self {
-            Self::Full(direction) | Self::Probe(direction) => direction,
+            Self::Full(direction) | Self::Nudge(direction) => direction,
         }
     }
 
@@ -54,14 +69,14 @@ impl PageTurnInput {
         matches!(self, Self::Full(_))
     }
 
-    pub(super) const fn is_probe(self) -> bool {
-        matches!(self, Self::Probe(_))
+    pub(super) const fn is_nudge(self) -> bool {
+        matches!(self, Self::Nudge(_))
     }
 
     fn wheel_delta(self) -> i32 {
         let magnitude = match self {
             Self::Full(_) => PAGE_WHEEL_DELTA,
-            Self::Probe(_) => PAGE_BOUNDARY_PROBE_DELTA,
+            Self::Nudge(_) => PAGE_BOUNDARY_PROBE_DELTA,
         };
         match self.direction() {
             ScrollDirection::Up => magnitude,
@@ -70,13 +85,25 @@ impl PageTurnInput {
     }
 }
 
-impl<'a> PageNavigator<'a> {
-    pub(super) fn new(runtime: &'a RecognizerRuntime, item_kind: ItemKind) -> Self {
-        Self { runtime, item_kind }
+impl PageNavigator {
+    pub(super) fn new(
+        recognizer: RecognizerSession,
+        item_kind: ItemKind,
+        classifier: TemplateClassifier,
+    ) -> Self {
+        Self {
+            recognizer,
+            item_kind,
+            classifier,
+        }
     }
 
-    pub(super) fn detect_home(&self, image: RgbaImage) -> Result<RoiObservation> {
-        self.runtime.detect(image, SlotLayout::Home)
+    pub(super) fn item_kind(&self) -> ItemKind {
+        self.item_kind
+    }
+
+    pub(super) fn recognizer(&self) -> RecognizerSession {
+        self.recognizer
     }
 
     pub(super) fn perform_confirmed_semantic_page_turn(
@@ -90,42 +117,54 @@ impl<'a> PageNavigator<'a> {
         let _guard = span.enter();
 
         automation.scroll(input.wheel_delta())?;
-        self.observe_instant_viewport_change(automation, current_page, input.direction())
+        self.observe_instant_viewport_change(automation, current_page, input)
     }
 
     fn observe_instant_viewport_change(
         &self,
         automation: &mut AutomationSession<'_>,
         current_page: &PageSnapshot,
-        direction: ScrollDirection,
+        input: PageTurnInput,
     ) -> Result<PageTurnResult> {
-        // Fingerprints trigger classification; semantic anchor displacement
-        // determines whether the explicit page input moved the viewport.
+        // Semantic anchors preserve measured page shifts when a target is
+        // shared; a changed fresh frame covers pages with no recognized target.
         let start = Instant::now();
         let mut visual_reference = current_page.signature.clone();
-        let mut pending_different: Option<PageSnapshot> = None;
         let mut same_viewport_frames = 0usize;
         let mut semantic_observations = 0usize;
+        let direction = input.direction();
+        let no_movement_grace = if input.is_nudge() {
+            PAGE_BOUNDARY_NUDGE_NO_MOVEMENT_GRACE
+        } else {
+            PAGE_TURN_NO_MOVEMENT_GRACE
+        };
 
         loop {
             let image = automation.capture()?;
             let signature = image_fingerprint(&image);
             let distance = fingerprint_distance(&visual_reference, &signature);
             let elapsed = start.elapsed();
-            let decision_time_elapsed = elapsed >= PAGE_TURN_DECISION_TIMEOUT;
-            let no_movement_check = elapsed >= PAGE_TURN_NO_MOVEMENT_GRACE;
-            if distance < PAGE_CHANGE_THRESHOLD && !no_movement_check && !decision_time_elapsed {
+            let no_movement_check = elapsed >= no_movement_grace;
+            if distance < PAGE_CHANGE_THRESHOLD && !no_movement_check {
                 continue;
             }
 
             let candidate = self.scan_direct_page(image)?;
             semantic_observations += 1;
-            let relation =
-                compare_page_turn(&current_page.roi, &candidate.roi, self.item_kind, direction);
+            let relation = match compare_page_turn(
+                &current_page.roi,
+                &candidate.roi,
+                self.item_kind,
+                direction,
+            ) {
+                PageRelation::DifferentViewport | PageRelation::Uncertain
+                    if distance < PAGE_CHANGE_THRESHOLD =>
+                {
+                    PageRelation::SameViewport
+                }
+                relation => relation,
+            };
             let elapsed = start.elapsed();
-            let decision_timed_out = elapsed >= PAGE_TURN_DECISION_TIMEOUT
-                && semantic_observations >= PAGE_TURN_MIN_SEMANTIC_OBSERVATIONS;
-            let hard_timed_out = elapsed >= PAGE_TURN_HARD_TIMEOUT;
             trace!(
                 relation = ?relation,
                 semantic_observations,
@@ -149,47 +188,20 @@ impl<'a> PageNavigator<'a> {
                         short,
                     });
                 }
-                PageRelation::DifferentViewport => {
-                    same_viewport_frames = 0;
-                    let mut had_pending_different = false;
-                    if let Some(previous_candidate) = pending_different.take() {
-                        had_pending_different = true;
-                        let confirmation = compare_page_turn(
-                            &previous_candidate.roi,
-                            &candidate.roi,
-                            self.item_kind,
-                            direction,
-                        );
-                        let confirmed = matches!(confirmation, PageRelation::SameViewport);
-                        trace!(
-                            confirmed,
-                            elapsed = ?start.elapsed(),
-                            "different viewport confirmation"
-                        );
-                        if confirmed {
-                            debug!(
-                                target: "hd2_preset_helper::perf",
-                                relation = ?PageRelation::DifferentViewport,
-                                "page turn completed"
-                            );
-                            return Ok(PageTurnResult::Moved {
-                                page: candidate,
-                                short: false,
-                            });
-                        }
-                    }
-                    if hard_timed_out || (decision_timed_out && had_pending_different) {
-                        bail!(
-                            "page input reached a different viewport but it was not confirmed after {} semantic observations over {:?}",
-                            semantic_observations,
-                            elapsed
-                        );
-                    }
-                    pending_different = Some(candidate);
+                relation @ (PageRelation::DifferentViewport | PageRelation::Uncertain) => {
+                    debug!(
+                        target: "hd2_preset_helper::perf",
+                        ?relation,
+                        distance,
+                        "page turn completed from changed frame"
+                    );
+                    return Ok(PageTurnResult::Moved {
+                        page: candidate,
+                        short: false,
+                    });
                 }
                 PageRelation::SameViewport => {
                     visual_reference = candidate.signature.clone();
-                    pending_different = None;
                     same_viewport_frames += 1;
                     if no_movement_check && same_viewport_frames >= PAGE_TURN_NO_MOVEMENT_FRAMES {
                         debug!(
@@ -200,26 +212,6 @@ impl<'a> PageNavigator<'a> {
                         );
                         return Ok(PageTurnResult::NoMovement(candidate));
                     }
-                    if hard_timed_out {
-                        bail!(
-                            "page input collected only {} of {} stable same-viewport frames after {} semantic observations over {:?}",
-                            same_viewport_frames,
-                            PAGE_TURN_NO_MOVEMENT_FRAMES,
-                            semantic_observations,
-                            elapsed
-                        );
-                    }
-                }
-                PageRelation::Uncertain => {
-                    same_viewport_frames = 0;
-                    pending_different = None;
-                    if decision_timed_out || hard_timed_out {
-                        bail!(
-                            "page input produced no confirmed viewport transition after {} semantic observations over {:?}",
-                            semantic_observations,
-                            elapsed
-                        );
-                    }
                 }
             }
         }
@@ -227,23 +219,59 @@ impl<'a> PageNavigator<'a> {
 
     pub(super) fn scan_direct_page(&self, image: RgbaImage) -> Result<PageSnapshot> {
         let roi = self
-            .runtime
-            .recognize(image, SlotLayout::List(self.item_kind))?;
-        Ok(Self::finish_direct_page(roi))
+            .recognizer
+            .detect(image, SlotLayout::List(self.item_kind))?;
+        self.prepare_direct_page(roi)
     }
 
     pub(super) fn prepare_direct_page(&self, mut roi: RoiObservation) -> Result<PageSnapshot> {
-        self.runtime.classify(&mut roi)?;
-        Ok(Self::finish_direct_page(roi))
+        let match_candidates = self.classifier.classify_batch(&mut roi)?;
+        Ok(self.finish_direct_page(roi, match_candidates))
     }
 
-    fn finish_direct_page(roi: RoiObservation) -> PageSnapshot {
+    fn finish_direct_page(
+        &self,
+        roi: RoiObservation,
+        match_candidates: Vec<TemplateMatchCandidate>,
+    ) -> PageSnapshot {
         let signature = {
             let span = debug_span!("roi_fingerprint");
             let _guard = span.enter();
             image_fingerprint(&roi.image)
         };
+        let slot_luma = roi
+            .slots
+            .iter()
+            .filter(|slot| slot.kind.is_selectable_item_for(self.item_kind))
+            .map(|slot| {
+                let core = slot_core_rect(slot);
+                let image = &roi.image;
+                let pixels = (core.y..core.y + core.h)
+                    .flat_map(move |y| {
+                        (core.x..core.x + core.w).map(move |x| {
+                            let [r, g, b, _] = image.get_pixel(x, y).0;
+                            luma601_u8(r, g, b)
+                        })
+                    })
+                    .collect();
+                let (center_x, center_y) = slot.center_f32();
+                SlotLuma {
+                    row: slot.row,
+                    col: slot.col,
+                    width: core.w,
+                    height: core.h,
+                    center_x: center_x - core.x as f32,
+                    center_y: center_y - core.y as f32,
+                    pixels,
+                }
+            })
+            .collect();
 
-        PageSnapshot { roi, signature }
+        PageSnapshot {
+            roi,
+            signature,
+            match_candidates,
+            slot_luma,
+        }
     }
 }

@@ -23,6 +23,19 @@ pub struct CaptureRegion<'a> {
     rect: ImageRect,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayColorInfo {
+    pub hdr_active: bool,
+    pub sdr_white_level: u32,
+}
+
+pub(crate) trait Rgba16fConverter {
+    fn convert_row(&self, source: &[u8], destination: &mut [u8]);
+
+    #[cfg(feature = "diagnostics")]
+    fn diagnostic_tag(&self) -> &str;
+}
+
 impl CaptureSource {
     pub fn new_for_window_target(target: &WindowTarget) -> Result<Self> {
         Ok(Self {
@@ -38,8 +51,16 @@ impl CaptureSource {
         self.platform.output_size()
     }
 
-    fn capture_region(&mut self, client_roi: ImageRect) -> Result<RgbaImage> {
-        self.platform.capture_region(client_roi)
+    pub fn display_color_info(&self) -> DisplayColorInfo {
+        self.platform.display_color_info()
+    }
+
+    fn capture_region(
+        &mut self,
+        client_roi: ImageRect,
+        converter: &dyn Rgba16fConverter,
+    ) -> Result<RgbaImage> {
+        self.platform.capture_region(client_roi, converter)
     }
 
     pub fn region(&mut self, rect: ImageRect) -> CaptureRegion<'_> {
@@ -48,8 +69,8 @@ impl CaptureSource {
 }
 
 impl CaptureRegion<'_> {
-    pub fn capture(&mut self) -> Result<RgbaImage> {
-        self.source.capture_region(self.rect)
+    pub(crate) fn capture(&mut self, converter: &dyn Rgba16fConverter) -> Result<RgbaImage> {
+        self.source.capture_region(self.rect, converter)
     }
 
     pub fn map_to_client(&self, local: (u32, u32)) -> ClientPoint {

@@ -13,6 +13,9 @@ ProductName = "HD2 Preset Helper"
 FileDescription = "HD2 Preset Helper"
 OriginalFilename = "HD2PresetHelper.exe"
 
+[features]
+diagnostics = []
+
 [[bin]]
 name = "HD2PresetHelper"
 path = "src/main.rs"
@@ -23,15 +26,11 @@ fast_image_resize = { version = "6.1.0", features = ["image"] }
 half = "2.7.1"
 image = { version = "0.25.9", default-features = false, features = ["png"] }
 rayon = "1.12.0"
-rust-embed = { version = "8.12.0", default-features = false, features = [
-    "debug-embed",
-    "deterministic-timestamps",
-] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 toml = "1.1.3"
 toml_edit = "0.25.13"
-tracing = { version = "0.1.44", features = ["release_max_level_info"] }
+tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }
 tray-icon = { version = "0.24.1", default-features = false }

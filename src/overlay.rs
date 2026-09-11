@@ -1,13 +1,13 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(target_os = "windows")]
 use anyhow::Result;
+#[cfg(target_os = "windows")]
+use std::path::Path;
 
 #[cfg(target_os = "windows")]
 use crate::app_events::AppEventSink;
 use crate::app_events::{AppEvent, OverlayPreset, OverlayPresetStatus};
-use crate::assets::IconCatalog;
 #[cfg(target_os = "windows")]
 use crate::input::HotkeyModifiers;
 
@@ -15,8 +15,8 @@ use crate::input::HotkeyModifiers;
 mod windows;
 
 #[cfg(target_os = "windows")]
-pub fn start(modifiers: HotkeyModifiers, catalog: Arc<IconCatalog>) -> Result<AppEventSink> {
-    windows::start(modifiers, catalog)
+pub fn start(modifiers: HotkeyModifiers, presets_path: &Path) -> Result<AppEventSink> {
+    windows::start(modifiers, presets_path)
 }
 
 const DONE_HIDE_DELAY: Duration = Duration::from_secs(2);
@@ -33,7 +33,6 @@ enum OverlayTone {
 }
 
 struct OverlayModel {
-    catalog: Arc<IconCatalog>,
     presets: Vec<OverlayPreset>,
     active_preset: Option<String>,
     status: String,
@@ -54,9 +53,8 @@ struct OverlayModelUpdate {
 }
 
 impl OverlayModel {
-    fn new(catalog: Arc<IconCatalog>) -> Self {
+    fn new() -> Self {
         Self {
-            catalog,
             presets: Vec::new(),
             active_preset: None,
             status: "Waiting for preset hotkey".to_string(),
@@ -137,34 +135,22 @@ impl OverlayModel {
                 self.tone = OverlayTone::Working;
                 (OverlayEventPolicy::Hold, false)
             }
-            AppEvent::ItemSelected { item_id } => {
+            AppEvent::ItemSelected => {
                 self.selected_count += 1;
                 let progress = if self.requested_count > 0 {
                     format!("{}/{}", self.selected_count, self.requested_count)
                 } else {
                     self.selected_count.to_string()
                 };
-                self.status = format!(
-                    "Selected {progress}: {}",
-                    self.catalog
-                        .get(&item_id)
-                        .map(|entry| entry.display_name.as_ref())
-                        .unwrap_or(&item_id)
-                );
+                self.status = format!("Selected {progress}");
                 self.tone = OverlayTone::Working;
                 (OverlayEventPolicy::Hold, false)
             }
-            AppEvent::PresetDone { preset, warning } => {
+            AppEvent::PresetDone { preset } => {
                 self.active_preset = Some(preset);
-                if let Some(warning) = warning {
-                    self.status = format!("Warning: {warning}");
-                    self.tone = OverlayTone::Working;
-                    (OverlayEventPolicy::HideAfter(FAILED_HIDE_DELAY), false)
-                } else {
-                    self.status = "Done".to_string();
-                    self.tone = OverlayTone::Success;
-                    (OverlayEventPolicy::HideAfter(DONE_HIDE_DELAY), false)
-                }
+                self.status = "Done".to_string();
+                self.tone = OverlayTone::Success;
+                (OverlayEventPolicy::HideAfter(DONE_HIDE_DELAY), false)
             }
             AppEvent::PresetFailed { preset, error } => {
                 self.active_preset = Some(preset);
