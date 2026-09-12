@@ -139,7 +139,7 @@ pub fn save_fallback_slot(
     screenshot: &RgbaImage,
     slot: &Slot,
     item_id: &str,
-    score: f64,
+    match_error: f64,
 ) -> Result<()> {
     let recorder = RECORDER.get().context("diagnostics were not initialized")?;
     let mut recorder = recorder
@@ -160,7 +160,7 @@ pub fn save_fallback_slot(
         })
         .collect::<String>();
     let path = recorder.anomaly_dir.join(format!(
-        "{timestamp}-{:03}-{item_name}-r{}-c{}-{score:.6}.png",
+        "{timestamp}-{:03}-{item_name}-r{}-c{}-{match_error:.6}.png",
         recorder.next_anomaly, slot.row, slot.col
     ));
     recorder.next_anomaly += 1;

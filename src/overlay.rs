@@ -7,7 +7,7 @@ use std::path::Path;
 
 #[cfg(target_os = "windows")]
 use crate::app_events::AppEventSink;
-use crate::app_events::{AppEvent, OverlayPreset, OverlayPresetStatus};
+use crate::app_events::{AppEvent, OverlayPreset, OverlayPresetStatus, PresetCompletion};
 #[cfg(target_os = "windows")]
 use crate::input::HotkeyModifiers;
 
@@ -20,7 +20,7 @@ pub fn start(modifiers: HotkeyModifiers, presets_path: &Path) -> Result<AppEvent
 }
 
 const DONE_HIDE_DELAY: Duration = Duration::from_secs(2);
-const FAILED_HIDE_DELAY: Duration = Duration::from_secs(5);
+const ATTENTION_HIDE_DELAY: Duration = Duration::from_secs(5);
 const READY_HIDE_DELAY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
@@ -101,7 +101,7 @@ impl OverlayModel {
                 self.selected_count = 0;
                 self.requested_count = 0;
                 self.tone = OverlayTone::Warning;
-                (OverlayEventPolicy::HideAfter(FAILED_HIDE_DELAY), false)
+                (OverlayEventPolicy::HideAfter(ATTENTION_HIDE_DELAY), false)
             }
             AppEvent::PresetSaved {
                 preset,
@@ -146,17 +146,26 @@ impl OverlayModel {
                 self.tone = OverlayTone::Working;
                 (OverlayEventPolicy::Hold, false)
             }
-            AppEvent::PresetDone { preset } => {
+            AppEvent::PresetDone { preset, completion } => {
                 self.active_preset = Some(preset);
-                self.status = "Done".to_string();
-                self.tone = OverlayTone::Success;
-                (OverlayEventPolicy::HideAfter(DONE_HIDE_DELAY), false)
+                match completion {
+                    PresetCompletion::Complete => {
+                        self.status = "Done".to_string();
+                        self.tone = OverlayTone::Success;
+                        (OverlayEventPolicy::HideAfter(DONE_HIDE_DELAY), false)
+                    }
+                    PresetCompletion::BoosterUnavailable => {
+                        self.status = "Booster already in use".to_string();
+                        self.tone = OverlayTone::Warning;
+                        (OverlayEventPolicy::HideAfter(ATTENTION_HIDE_DELAY), false)
+                    }
+                }
             }
             AppEvent::PresetFailed { preset, error } => {
                 self.active_preset = Some(preset);
                 self.status = format!("Failed: {}", first_error_line(&error));
                 self.tone = OverlayTone::Error;
-                (OverlayEventPolicy::HideAfter(FAILED_HIDE_DELAY), false)
+                (OverlayEventPolicy::HideAfter(ATTENTION_HIDE_DELAY), false)
             }
         };
 

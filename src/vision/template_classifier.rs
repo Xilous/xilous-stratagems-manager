@@ -9,10 +9,11 @@ use crate::item::{ItemKind, StratagemCategory};
 
 use super::booster;
 use super::matcher::{
-    MATCH_THRESHOLD, MatchDomain, PreparedTemplate, compare, prepare_template, render_to_raster,
+    MATCH_THRESHOLD, MatchDomain, PreparedTemplate, SemanticImage, compare, prepare_template,
+    render_to_raster,
 };
 use super::semantic_extractor::{SemanticExtraction, SemanticSource, crop_slot_sample};
-use super::{Classification, ImageSample, RoiObservation, Slot, SlotLayout};
+use super::{Classification, ImageSample, ItemAvailability, RoiObservation, Slot, SlotLayout};
 
 const CANDIDATE_PHYSICAL_SIZE: f32 = 51.0;
 const ENV_PHASES: [f32; 5] = [-0.45, -0.225, 0.0, 0.225, 0.45];
@@ -21,6 +22,15 @@ struct PreparedTemplateEntry {
     item_id: String,
     category: Option<StratagemCategory>,
     prepared: PreparedTemplate,
+    reference_yellow_luma: Option<f32>,
+}
+
+struct TemplateSource {
+    item_id: String,
+    category: Option<StratagemCategory>,
+    semantic: SemanticImage,
+    physical_size: f32,
+    reference_yellow_luma: Option<f32>,
 }
 
 /// Classifies selectable list slots against templates captured with a preset.
@@ -40,6 +50,7 @@ pub struct TemplateMatchCandidate {
     pub score: f64,
     pub match_margin: f32,
     pub gate_quality: f32,
+    pub availability: ItemAvailability,
 }
 
 struct SlotMatchOutcome {
@@ -71,7 +82,7 @@ impl TemplateClassifier {
         let sources = sources
             .into_iter()
             .map(|(item_id, sample)| {
-                let (category, semantic) = match item_kind {
+                let (category, semantic, reference_yellow_luma) = match item_kind {
                     ItemKind::Stratagem => {
                         let source = SemanticSource::prepare(&sample).with_context(|| {
                             format!("failed to prepare local template {item_id}")
@@ -83,20 +94,27 @@ impl TemplateClassifier {
                             .extract(category)
                             .with_context(|| format!("failed to extract local template {item_id}"))?
                             .image;
-                        (Some(category), semantic)
+                        (Some(category), semantic, None)
                     }
-                    ItemKind::Booster => (
-                        None,
-                        booster::extract(&sample)
-                            .with_context(|| format!("failed to extract local template {item_id}"))?
-                            .image,
-                    ),
+                    ItemKind::Booster => {
+                        let extraction = booster::extract(&sample).with_context(|| {
+                            format!("failed to extract local template {item_id}")
+                        })?;
+                        let reference_yellow_luma = booster::yellow_luma(&extraction);
+                        (None, extraction.image, Some(reference_yellow_luma))
+                    }
                 };
-                Ok((item_id, category, semantic, sample.geometry.physical_size))
+                Ok(TemplateSource {
+                    item_id,
+                    category,
+                    semantic,
+                    physical_size: sample.geometry.physical_size,
+                    reference_yellow_luma,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         let categories = sources.iter().fold(Vec::new(), |mut categories, source| {
-            if let Some(category) = source.1
+            if let Some(category) = source.category
                 && !categories.contains(&category)
             {
                 categories.push(category);
@@ -129,13 +147,13 @@ impl TemplateClassifier {
 
         let prepared = sources
             .into_par_iter()
-            .map(|(item_id, category, semantic, template_physical_size)| {
+            .map(|source| {
                 let mut env_candidates = Vec::with_capacity(25);
                 for phase_y in ENV_PHASES {
                     for phase_x in ENV_PHASES {
                         env_candidates.push(render_to_raster(
-                            &semantic,
-                            template_physical_size,
+                            &source.semantic,
+                            source.physical_size,
                             (
                                 candidate_geometry.image.width() as usize,
                                 candidate_geometry.image.height() as usize,
@@ -150,18 +168,19 @@ impl TemplateClassifier {
                     }
                 }
                 let prepared = prepare_template(
-                    &semantic,
-                    template_physical_size,
+                    &source.semantic,
+                    source.physical_size,
                     &env_candidates,
                     candidate_physical_size,
                     domain,
                     item_kind == ItemKind::Stratagem,
                 )
-                .with_context(|| format!("failed to prepare local template {item_id}"))?;
+                .with_context(|| format!("failed to prepare local template {}", source.item_id))?;
                 Ok(PreparedTemplateEntry {
-                    item_id,
-                    category,
+                    item_id: source.item_id,
+                    category: source.category,
                     prepared,
+                    reference_yellow_luma: source.reference_yellow_luma,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -289,7 +308,7 @@ impl TemplateClassifier {
         let accepted = result.score < self.match_threshold;
         let candidates = ranked
             .iter()
-            .map(|(template, _, candidate_result)| {
+            .map(|(template, extraction, candidate_result)| {
                 let competing_score = ranked
                     .iter()
                     .filter(|(other, _, _)| other.item_id != template.item_id)
@@ -305,6 +324,7 @@ impl TemplateClassifier {
                     gate_quality: ((self.match_threshold - candidate_result.score)
                         / self.match_threshold)
                         .clamp(0.0, 1.0) as f32,
+                    availability: item_availability(template, extraction),
                 }
             })
             .collect();
@@ -334,10 +354,11 @@ impl TemplateClassifier {
         );
         slot.classification = accepted.then(|| Classification {
             item_id: best.item_id.clone(),
-            match_score: (1.0 - result.score).clamp(0.0, 1.0) as f32,
+            match_error: result.score as f32,
             match_margin: margin as f32,
             gate_quality: ((self.match_threshold - result.score) / self.match_threshold)
                 .clamp(0.0, 1.0) as f32,
+            availability: item_availability(best, best_extraction),
         });
         Ok(SlotMatchOutcome {
             accepted,
@@ -345,6 +366,21 @@ impl TemplateClassifier {
             #[cfg(feature = "diagnostics")]
             diagnostics,
         })
+    }
+}
+
+fn item_availability(
+    template: &PreparedTemplateEntry,
+    extraction: &SemanticExtraction,
+) -> ItemAvailability {
+    let Some(reference) = template.reference_yellow_luma else {
+        return ItemAvailability::Available;
+    };
+    let brightness_ratio = booster::yellow_luma(extraction) / reference;
+    if brightness_ratio >= booster::AVAILABLE_BRIGHTNESS_RATIO {
+        ItemAvailability::Available
+    } else {
+        ItemAvailability::Unavailable { brightness_ratio }
     }
 }
 

@@ -9,13 +9,15 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use tracing::{debug, debug_span, info_span, warn};
+use tracing::{debug, debug_span, info, info_span, warn};
 
 use crate::app_events::{AppEvent, AppEventSink};
 use crate::automation::AutomationSession;
 use crate::item::ItemKind;
 use crate::preset::{LocalTemplate, load_template_sample};
-use crate::vision::{RecognizerSession, RoiObservation, Slot, SlotLayout, TemplateClassifier};
+use crate::vision::{
+    ItemAvailability, RecognizerSession, RoiObservation, Slot, SlotLayout, TemplateClassifier,
+};
 
 use super::{UiState, empty_loadout_entry_slot, wait_for_stable_ui_state};
 
@@ -33,6 +35,17 @@ const TARGET_POSITION_TOLERANCE: u32 = 2;
 const POST_CLICK_CONFIRM_TIMEOUT: Duration = Duration::from_millis(400);
 const POST_CLICK_MIN_OBSERVATIONS: u32 = 2;
 const TERMINAL_SETTLE_TIMEOUT: Duration = Duration::from_millis(600);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoosterApplyOutcome {
+    Applied,
+    Unavailable,
+}
+
+enum ListSelectionOutcome {
+    Applied(RoiObservation),
+    Unavailable,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ScrollDirection {
@@ -101,14 +114,19 @@ pub fn apply_empty_loadout_preset(
         .iter()
         .map(|template| template.path.clone())
         .collect::<Vec<_>>();
-    select_items_from_open_list(
+    match select_items_from_open_list(
         PageNavigator::new(recognizer, ItemKind::Stratagem, classifier),
         automation,
         events,
         &item_ids,
         opened_list,
         apply_in_saved_order,
-    )
+    )? {
+        ListSelectionOutcome::Applied(home) => Ok(home),
+        ListSelectionOutcome::Unavailable => {
+            unreachable!("stratagem candidates do not have an unavailable state")
+        }
+    }
 }
 
 pub fn apply_booster_from_home(
@@ -118,7 +136,7 @@ pub fn apply_booster_from_home(
     home: &RoiObservation,
     presets_path: &Path,
     template: &LocalTemplate,
-) -> Result<RoiObservation> {
+) -> Result<BoosterApplyOutcome> {
     let target = home_booster_target(home)?;
     let opened_list = open_slot_list(automation, recognizer, target)?;
     let source = load_template_sample(presets_path, template)?;
@@ -128,14 +146,17 @@ pub fn apply_booster_from_home(
         recognizer.ui_scale(),
         &opened_list,
     )?;
-    select_items_from_open_list(
+    match select_items_from_open_list(
         PageNavigator::new(recognizer, ItemKind::Booster, classifier),
         automation,
         events,
         std::slice::from_ref(&template.path),
         opened_list,
         true,
-    )
+    )? {
+        ListSelectionOutcome::Applied(_) => Ok(BoosterApplyOutcome::Applied),
+        ListSelectionOutcome::Unavailable => Ok(BoosterApplyOutcome::Unavailable),
+    }
 }
 
 fn select_items_from_open_list(
@@ -145,7 +166,7 @@ fn select_items_from_open_list(
     items: &[String],
     initial_observation: RoiObservation,
     apply_in_saved_order: bool,
-) -> Result<RoiObservation> {
+) -> Result<ListSelectionOutcome> {
     let item_kind = navigator.item_kind();
     let span = info_span!(
         "preset_list_selection",
@@ -200,13 +221,22 @@ fn select_items_from_open_list(
             })
         };
         if let Some(target) = target {
+            if let ItemAvailability::Unavailable { brightness_ratio } = target.availability {
+                info!(
+                    item_id = %target.item_id,
+                    match_error = target.match_error,
+                    brightness_ratio,
+                    "booster target is already in use"
+                );
+                return Ok(ListSelectionOutcome::Unavailable);
+            }
             #[cfg(feature = "diagnostics")]
             if target.fallback {
                 crate::vision::save_fallback_slot(
                     &current_page.roi.image,
                     &target.slot,
                     &target.item_id,
-                    1.0 - f64::from(target.match_score),
+                    f64::from(target.match_error),
                 )?;
             }
             let span = debug_span!("select_visible_item", item_id = %target.item_id);
@@ -248,7 +278,7 @@ fn select_items_from_open_list(
                         "final item selection confirmed after returning home"
                     );
                     debug_assert!(remaining.is_empty());
-                    return Ok(home);
+                    return Ok(ListSelectionOutcome::Applied(home));
                 }
             }
         }
@@ -426,7 +456,7 @@ fn select_preset_target(
             attempt,
             x,
             y,
-            match_score = target.match_score,
+            match_error = target.match_error,
             match_margin = target.match_margin,
             gate_quality = target.gate_quality,
             hover_score = before.target_score(),

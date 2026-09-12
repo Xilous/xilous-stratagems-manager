@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 use crate::item::ItemKind;
-use crate::vision::{RoiObservation, Slot, TemplateMatchCandidate};
+use crate::vision::{ItemAvailability, RoiObservation, Slot, TemplateMatchCandidate};
 
 use super::ScrollDirection;
 use super::page_navigation::{PageSnapshot, PageTurnInput, SlotLuma};
@@ -47,6 +47,7 @@ struct MappedCandidate {
     score: f64,
     match_margin: f32,
     gate_quality: f32,
+    availability: ItemAvailability,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -442,6 +443,7 @@ impl ListMap {
                 score: candidate.score,
                 match_margin: candidate.match_margin,
                 gate_quality: candidate.gate_quality,
+                availability: candidate.availability,
             };
             if self.selected.contains(&slot_id) {
                 continue;
@@ -508,6 +510,9 @@ impl ListMap {
             score: candidate.map_or(1.0, |candidate| candidate.score),
             match_margin: candidate.map_or(0.0, |candidate| candidate.match_margin),
             gate_quality: candidate.map_or(0.0, |candidate| candidate.gate_quality),
+            availability: candidate.map_or(ItemAvailability::Available, |candidate| {
+                candidate.availability
+            }),
         })
     }
 

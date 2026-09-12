@@ -171,12 +171,19 @@ pub struct ImageSample {
 #[derive(Debug, Clone)]
 pub struct Classification {
     pub item_id: String,
-    /// Raw fused template similarity used by the acceptance gate.
-    pub match_score: f32,
-    /// Difference between the best and second-best template scores.
+    /// Raw template-matching error used by the acceptance gate; lower is better.
+    pub match_error: f32,
+    /// Difference between the best and second-best template errors.
     pub match_margin: f32,
     /// Normalized surplus above the weaker acceptance gate; not a probability.
     pub gate_quality: f32,
+    pub availability: ItemAvailability,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ItemAvailability {
+    Available,
+    Unavailable { brightness_ratio: f32 },
 }
 
 pub fn resolve_calibration_roi_for_size(

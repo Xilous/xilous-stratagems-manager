@@ -1,12 +1,13 @@
 use crate::item::ItemKind;
-use crate::vision::{RoiObservation, Slot, TemplateMatchCandidate};
+use crate::vision::{ItemAvailability, RoiObservation, Slot, TemplateMatchCandidate};
 
 #[derive(Clone)]
 pub(super) struct DirectClickTarget {
     pub(super) item_id: String,
-    pub(super) match_score: f32,
+    pub(super) match_error: f32,
     pub(super) match_margin: f32,
     pub(super) gate_quality: f32,
+    pub(super) availability: ItemAvailability,
     pub(super) slot: Slot,
     pub(super) fallback: bool,
 }
@@ -15,9 +16,10 @@ impl DirectClickTarget {
     pub(super) fn from_fallback(candidate: TemplateMatchCandidate) -> Self {
         Self {
             item_id: candidate.item_id,
-            match_score: (1.0 - candidate.score).clamp(0.0, 1.0) as f32,
+            match_error: candidate.score as f32,
             match_margin: candidate.match_margin,
             gate_quality: candidate.gate_quality,
+            availability: candidate.availability,
             slot: candidate.slot,
             fallback: true,
         }
@@ -55,9 +57,10 @@ pub(super) fn find_visible_target(
             }
             Some(DirectClickTarget {
                 item_id: classification.item_id.clone(),
-                match_score: classification.match_score,
+                match_error: classification.match_error,
                 match_margin: classification.match_margin,
                 gate_quality: classification.gate_quality,
+                availability: classification.availability,
                 slot: slot.clone(),
                 fallback: false,
             })
@@ -66,7 +69,6 @@ pub(super) fn find_visible_target(
             left.gate_quality
                 .total_cmp(&right.gate_quality)
                 .then_with(|| left.match_margin.total_cmp(&right.match_margin))
-                .then_with(|| left.match_score.total_cmp(&right.match_score))
         })
 }
 

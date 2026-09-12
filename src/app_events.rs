@@ -36,6 +36,12 @@ pub enum OverlayPresetStatus {
     Invalid(String),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum PresetCompletion {
+    Complete,
+    BoosterUnavailable,
+}
+
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     PresetListUpdated {
@@ -66,6 +72,7 @@ pub enum AppEvent {
     ItemSelected,
     PresetDone {
         preset: String,
+        completion: PresetCompletion,
     },
     PresetFailed {
         preset: String,

@@ -4,7 +4,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use tracing::{debug, info, info_span};
 
-use crate::app_events::{AppEvent, AppEventSink};
+use crate::app_events::{AppEvent, AppEventSink, PresetCompletion};
 use crate::automation::AutomationSession;
 use crate::capture::CaptureSessionManager;
 use crate::color_normalization::ColorNormalizer;
@@ -12,8 +12,8 @@ use crate::game_settings::read_color_settings;
 use crate::game_window::find_game_window;
 use crate::input;
 use crate::loadout::{
-    UiState, apply_booster_from_home, apply_empty_loadout_preset, bind_loadout_region,
-    collect_current_preset, detect_ui_state, scan_loadout_home,
+    BoosterApplyOutcome, UiState, apply_booster_from_home, apply_empty_loadout_preset,
+    bind_loadout_region, collect_current_preset, detect_ui_state, scan_loadout_home,
 };
 use crate::permissions;
 use crate::preset::{
@@ -114,12 +114,16 @@ pub fn handle_preset_hotkey(
         log_home_tone(&initial_result);
     }
 
-    let (outcome, ready_up_after_apply) = match ui_state {
+    let (outcome, ready_up_after_apply, completion) = match ui_state {
         UiState::HomeFilled => {
             let captured = collect_current_preset(&initial_result, recognizer.ui_scale())
                 .context("failed to collect current preset")?;
             save_current_preset(config, preset_name, &captured)?;
-            (PresetActionOutcome::Saved, false)
+            (
+                PresetActionOutcome::Saved,
+                false,
+                PresetCompletion::Complete,
+            )
         }
 
         UiState::HomeMixed => {
@@ -145,9 +149,20 @@ pub fn handle_preset_hotkey(
                 config.apply_in_saved_order,
             )
             .context("failed to apply stratagems from empty home")?;
-            let _stable_home =
+            let booster =
                 apply_booster_if_present(recognizer, &mut automation, config, &preset, home)?;
-            (PresetActionOutcome::Applied, preset.booster.is_some())
+            let (ready_up_after_apply, completion) = match booster {
+                Some(BoosterApplyOutcome::Applied) => (true, PresetCompletion::Complete),
+                Some(BoosterApplyOutcome::Unavailable) => {
+                    (false, PresetCompletion::BoosterUnavailable)
+                }
+                None => (false, PresetCompletion::Complete),
+            };
+            (
+                PresetActionOutcome::Applied,
+                ready_up_after_apply,
+                completion,
+            )
         }
 
         UiState::List(_) | UiState::Unknown => {
@@ -162,6 +177,7 @@ pub fn handle_preset_hotkey(
 
     config.events.emit(AppEvent::PresetDone {
         preset: preset_name.to_string(),
+        completion,
     });
     info!(
         preset = %preset_name,
@@ -242,9 +258,9 @@ fn apply_booster_if_present(
     config: &PresetActionConfig<'_>,
     preset: &Preset,
     home: RoiObservation,
-) -> Result<RoiObservation> {
+) -> Result<Option<BoosterApplyOutcome>> {
     let Some(booster) = preset.booster.as_ref() else {
-        return Ok(home);
+        return Ok(None);
     };
     apply_booster_from_home(
         recognizer,
@@ -254,5 +270,6 @@ fn apply_booster_if_present(
         config.presets,
         booster,
     )
+    .map(Some)
     .context("failed to apply booster from home")
 }

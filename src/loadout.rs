@@ -14,7 +14,7 @@ use crate::vision::{
     crop_booster_sample, crop_slot_sample, icon_likeness, luma601_u8,
 };
 
-pub use direct_select::{apply_booster_from_home, apply_empty_loadout_preset};
+pub use direct_select::{BoosterApplyOutcome, apply_booster_from_home, apply_empty_loadout_preset};
 pub use frame::bind_loadout_region;
 
 use self::frame::fingerprint_distance;
