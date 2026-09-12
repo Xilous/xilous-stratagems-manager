@@ -12,7 +12,7 @@ use super::page_navigation::{PageSnapshot, PageTurnInput, SlotLuma};
 #[path = "list_map_diagnostics.rs"]
 mod diagnostics;
 
-const LANDMARK_MIN_ZNCC: f32 = 0.80;
+const LANDMARK_MIN_ZNCC: f32 = 0.70;
 const PAGE_ALIGNMENT_MIN_MARGIN: f32 = 0.04;
 const POSITION_TOLERANCE_PX: f32 = 2.0;
 
@@ -228,7 +228,7 @@ impl ListMap {
             .slot_luma
             .iter()
             .enumerate()
-            .flat_map(|(page_index, current)| {
+            .filter_map(|(page_index, current)| {
                 self.slots
                     .iter()
                     .enumerate()
@@ -240,12 +240,14 @@ impl ListMap {
                     })
                     .filter_map(move |(_, mapped)| {
                         let zncc = best_shifted_zncc(&mapped.sample, current)?;
-                        (zncc >= LANDMARK_MIN_ZNCC).then_some(PairMatch {
+                        Some(PairMatch {
                             page_index,
                             offset_y: mapped.content_y - current.page_y,
                             zncc,
                         })
                     })
+                    .max_by(|left, right| left.zncc.total_cmp(&right.zncc))
+                    .filter(|pair| pair.zncc >= LANDMARK_MIN_ZNCC)
             })
             .collect::<Vec<_>>();
 
