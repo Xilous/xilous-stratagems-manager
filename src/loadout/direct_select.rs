@@ -228,6 +228,7 @@ fn select_items_from_open_list(
             list_map.mark_selected(&selected_slot);
             match outcome {
                 TargetSelectionOutcome::List { page, placement } => {
+                    let vertical_shift = placement.vertical_shift;
                     list_map.commit_after_click(&page, placement);
                     current_page = page;
                     wheel_attempts = 0;
@@ -235,8 +236,7 @@ fn select_items_from_open_list(
                     debug!(
                         item_id = %selected_item_id,
                         remaining_items = remaining.len(),
-                        row_delta = placement.row_delta(),
-                        vertical_shift = placement.vertical_shift,
+                        vertical_shift,
                         "single-item selection confirmed"
                     );
                     continue;
@@ -272,7 +272,7 @@ fn select_items_from_open_list(
             );
         }
 
-        let hint = list_map.navigation_hint(item_id, &current_page.roi);
+        let hint = list_map.navigation_hint(item_id);
         let direction = match hint {
             NavigationHint::Scroll(direction) => direction,
             NavigationHint::ExpectedVisible => {
@@ -341,6 +341,9 @@ fn select_items_from_open_list(
                     );
                 }
                 current_page = recovered;
+                if input.is_nudge() {
+                    bail!("page navigation remained ambiguous after a boundary probe");
+                }
                 boundary_candidate = Some(direction);
                 debug!(
                     remaining_items = remaining.len(),
@@ -414,7 +417,6 @@ fn select_preset_target(
     )?;
     let mut target = prepared.target;
     let before = prepared.sample;
-    let mut before_slots = prepared.page_slots;
     let mut last_after_score = None;
 
     for attempt in 1..=MAX_TARGET_CLICK_ATTEMPTS {
@@ -476,36 +478,23 @@ fn select_preset_target(
             );
         }
 
-        match observe_post_click_state(
-            automation,
-            navigator,
-            list_map,
-            &target,
-            &before,
-            &before_slots,
-        )? {
+        match observe_post_click_state(automation, navigator, list_map, &target, &before)? {
             PostClickObservation::Selected { page, placement } => {
                 debug!(
                     item_id = %item_id,
                     attempt,
-                    row_delta = placement.row_delta(),
                     vertical_shift = placement.vertical_shift,
                     "preset item selected state confirmed"
                 );
                 return Ok(TargetSelectionOutcome::List { page, placement });
             }
-            PostClickObservation::Unchanged {
-                slot,
-                page,
-                after_score,
-            } => {
+            PostClickObservation::Unchanged { slot, after_score } => {
                 debug!(
                     item_id = %item_id,
                     attempt,
                     "click left the target at the same position and brightness; retrying in place"
                 );
                 target.slot = slot;
-                before_slots = page.roi.slots;
                 last_after_score = Some(after_score);
             }
         }
@@ -531,7 +520,6 @@ enum PostClickObservation {
     },
     Unchanged {
         slot: Slot,
-        page: PageSnapshot,
         after_score: f32,
     },
 }
@@ -542,25 +530,16 @@ fn observe_post_click_state(
     list_map: &ListMap,
     clicked_target: &DirectClickTarget,
     before: &HoverSample,
-    before_slots: &[Slot],
 ) -> Result<PostClickObservation> {
     let started = Instant::now();
     let mut observation = 0u32;
     let item_id = clicked_target.item_id.as_str();
-    let item_kind = clicked_target
-        .slot
-        .kind
-        .classification_kind()
-        .context("clicked target slot has no classifiable item kind")?;
-
     loop {
         observation += 1;
         let image = automation.capture()?;
         let page = navigator.scan_direct_page(image)?;
 
-        let Some(placement) =
-            list_map.locate_after_click(before_slots, &page, &clicked_target.slot)
-        else {
+        let Some(placement) = list_map.locate_after_click(&page, &clicked_target.slot) else {
             debug!(
                 item_id,
                 observation, "post-click page could not be located in the temporary list map"
@@ -579,26 +558,17 @@ fn observe_post_click_state(
             debug!(
                 item_id,
                 observation,
-                row_delta = placement.row_delta(),
                 vertical_shift = placement.vertical_shift,
                 "post-click success confirmed by viewport movement"
             );
             return Ok(PostClickObservation::Selected { page, placement });
         }
 
-        let target_row = clicked_target.slot.row as i32 - placement.row_delta();
-        let slot = page.roi.slots.iter().find(|slot| {
-            slot.kind.is_selectable_item_for(item_kind)
-                && slot.row as i32 == target_row
-                && slot.col == clicked_target.slot.col
-        });
-
-        let Some(slot) = slot.cloned() else {
+        let Some(slot) = list_map.slot_after_placement(&placement, &page.roi, &clicked_target.slot)
+        else {
             debug!(
                 item_id,
-                observation,
-                row_delta = placement.row_delta(),
-                "post-click target slot is absent after map placement"
+                observation, "post-click target slot is absent after map placement"
             );
             if started.elapsed() >= POST_CLICK_CONFIRM_TIMEOUT
                 && observation >= POST_CLICK_MIN_OBSERVATIONS
@@ -634,7 +604,6 @@ fn observe_post_click_state(
             );
             return Ok(PostClickObservation::Unchanged {
                 slot,
-                page,
                 after_score: sample.target_score(),
             });
         }
@@ -644,7 +613,6 @@ fn observe_post_click_state(
 struct PreparedHover {
     target: DirectClickTarget,
     sample: HoverSample,
-    page_slots: Vec<Slot>,
 }
 
 fn relocate_and_wait_hover(
@@ -658,11 +626,7 @@ fn relocate_and_wait_hover(
     automation.move_cursor(target.slot.center())?;
     match HoverVerifier::wait_at_current_position(automation, current_slots, &target.slot) {
         Ok(sample) => {
-            return Ok(PreparedHover {
-                target,
-                sample,
-                page_slots: current_slots.to_vec(),
-            });
+            return Ok(PreparedHover { target, sample });
         }
         Err(error) => {
             debug!(
@@ -704,7 +668,6 @@ fn relocate_and_wait_hover(
                 return Ok(PreparedHover {
                     target: relocated_target,
                     sample,
-                    page_slots: page.roi.slots,
                 });
             }
             Err(error) => {

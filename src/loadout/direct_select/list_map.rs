@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use tracing::debug;
 
@@ -12,18 +12,38 @@ use super::page_navigation::{PageSnapshot, PageTurnInput, SlotLuma};
 #[path = "list_map_diagnostics.rs"]
 mod diagnostics;
 
-const PAGE_ALIGNMENT_MIN_MEAN_ZNCC: f32 = 0.80;
+const LANDMARK_MIN_ZNCC: f32 = 0.80;
 const PAGE_ALIGNMENT_MIN_MARGIN: f32 = 0.04;
+const POSITION_TOLERANCE_PX: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct GridPosition {
-    row: i32,
+struct SlotId(usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LocalPosition {
+    row: u32,
     col: u32,
+}
+
+impl LocalPosition {
+    const fn of(slot: &Slot) -> Self {
+        Self {
+            row: slot.row,
+            col: slot.col,
+        }
+    }
+
+    const fn of_luma(slot: &SlotLuma) -> Self {
+        Self {
+            row: slot.row,
+            col: slot.col,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 struct MappedCandidate {
-    position: GridPosition,
+    slot_id: SlotId,
     score: f64,
     match_margin: f32,
     gate_quality: f32,
@@ -61,28 +81,45 @@ impl CandidateEvidence {
     }
 }
 
-struct MappedSlotLuma {
+struct MapSlot {
+    col: u32,
+    content_y: f32,
     sample: SlotLuma,
-    interior_depth: u32,
+    edge_clearance: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
-struct PageAlignment {
-    row_delta: i32,
+struct PlacedSlot {
+    local: LocalPosition,
+    id: SlotId,
+}
+
+#[derive(Clone, Debug)]
+struct PagePlacement {
+    offset_y: f32,
+    mean_zncc: f32,
+    support: usize,
+    slots: Vec<PlacedSlot>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PairMatch {
+    page_index: usize,
+    offset_y: f32,
+    zncc: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AlignmentCandidate {
+    offset_y: f32,
     mean_zncc: f32,
     support: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct PostClickPlacement {
-    alignment: PageAlignment,
+    page: PagePlacement,
     pub(super) vertical_shift: f32,
-}
-
-impl PostClickPlacement {
-    pub(super) const fn row_delta(self) -> i32 {
-        self.alignment.row_delta
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -93,66 +130,82 @@ pub(super) enum NavigationHint {
 
 pub(super) struct ListMap {
     item_kind: ItemKind,
-    row_base: i32,
-    items: HashMap<String, GridPosition>,
-    slot_luma: HashMap<GridPosition, MappedSlotLuma>,
-    candidate_evidence: HashMap<String, HashMap<GridPosition, CandidateEvidence>>,
+    slots: Vec<MapSlot>,
+    current: PagePlacement,
+    items: HashMap<String, SlotId>,
+    candidate_evidence: HashMap<String, HashMap<SlotId, CandidateEvidence>>,
     active_fallbacks: HashMap<String, MappedCandidate>,
-    selected: HashSet<GridPosition>,
+    selected: HashSet<SlotId>,
 }
 
 impl ListMap {
     pub(super) fn new(page: &PageSnapshot, item_kind: ItemKind) -> Self {
         let mut map = Self {
             item_kind,
-            row_base: 0,
+            slots: Vec::new(),
+            current: PagePlacement {
+                offset_y: 0.0,
+                mean_zncc: 1.0,
+                support: page.slot_luma.len(),
+                slots: Vec::new(),
+            },
             items: HashMap::new(),
-            slot_luma: HashMap::new(),
             candidate_evidence: HashMap::new(),
             active_fallbacks: HashMap::new(),
             selected: HashSet::new(),
         };
-        map.record_page(page);
+        let initial = map.placement_at_offset(page, 0.0, 1.0, page.slot_luma.len());
+        map.commit_page(page, initial, "initial");
         map
     }
 
-    pub(super) fn advance(&mut self, current: &PageSnapshot, input: PageTurnInput) -> bool {
-        let predicted = match input {
-            PageTurnInput::Full(ScrollDirection::Down) => 0..=4,
-            PageTurnInput::Full(ScrollDirection::Up) => -4..=0,
-            PageTurnInput::Nudge(ScrollDirection::Down) => 0..=2,
-            PageTurnInput::Nudge(ScrollDirection::Up) => -2..=0,
+    pub(super) fn advance(&mut self, page: &PageSnapshot, input: PageTurnInput) -> bool {
+        let Some(placement) = self.find_placement(page, Some(input.direction()), None, "page-turn")
+        else {
+            return false;
         };
-        self.place_page(current, predicted, "predicted")
+        self.commit_page(page, placement, "page-turn");
+        true
     }
 
     pub(super) fn locate_after_click(
         &self,
-        before_slots: &[Slot],
         page: &PageSnapshot,
         clicked_slot: &Slot,
     ) -> Option<PostClickPlacement> {
-        let clicked_position = GridPosition {
-            row: self.row_base + clicked_slot.row as i32,
-            col: clicked_slot.col,
-        };
-        let alignment = self.find_alignment(page, -2..=2, "post-click", Some(clicked_position))?;
-        let vertical_shift = median_vertical_shift(
-            before_slots,
-            &page.roi.slots,
-            alignment.row_delta,
-            self.item_kind,
-        )?;
+        let clicked_id = self.current_slot_id(clicked_slot)?;
+        let placement = self.find_placement(page, None, Some(clicked_id), "post-click")?;
+        let vertical_shift = self.current.offset_y - placement.offset_y;
         debug!(
-            row_delta = alignment.row_delta,
+            offset_y = placement.offset_y,
             vertical_shift,
-            support = alignment.support,
+            support = placement.support,
+            mean_zncc = placement.mean_zncc,
             "post-click page located in temporary list map"
         );
         Some(PostClickPlacement {
-            alignment,
+            page: placement,
             vertical_shift,
         })
+    }
+
+    pub(super) fn slot_after_placement(
+        &self,
+        placement: &PostClickPlacement,
+        page: &RoiObservation,
+        previous_slot: &Slot,
+    ) -> Option<Slot> {
+        let id = self.current_slot_id(previous_slot)?;
+        let local = placement
+            .page
+            .slots
+            .iter()
+            .find(|placed| placed.id == id)?
+            .local;
+        page.slots
+            .iter()
+            .find(|slot| LocalPosition::of(slot) == local)
+            .cloned()
     }
 
     pub(super) fn commit_after_click(
@@ -160,126 +213,182 @@ impl ListMap {
         page: &PageSnapshot,
         placement: PostClickPlacement,
     ) {
-        self.commit_page(page, placement.alignment, "post-click");
+        self.commit_page(page, placement.page, "post-click");
     }
 
-    fn place_page(
-        &mut self,
-        page: &PageSnapshot,
-        predicted_deltas: impl IntoIterator<Item = i32>,
-        context: &'static str,
-    ) -> bool {
-        let Some(alignment) = self.find_alignment(page, predicted_deltas, context, None) else {
-            return false;
-        };
-        self.commit_page(page, alignment, context);
-        true
-    }
-
-    fn find_alignment(
+    fn find_placement(
         &self,
         page: &PageSnapshot,
-        predicted_deltas: impl IntoIterator<Item = i32>,
+        direction: Option<ScrollDirection>,
+        excluded: Option<SlotId>,
         context: &'static str,
-        excluded: Option<GridPosition>,
-    ) -> Option<PageAlignment> {
-        let predicted = predicted_deltas.into_iter().collect::<Vec<_>>();
-        self.evaluate_alignments(&page.slot_luma, excluded, predicted, context, "local")
-            .or_else(|| {
-                self.evaluate_alignments(
-                    &page.slot_luma,
-                    excluded,
-                    alignment_deltas(&self.slot_luma, &page.slot_luma, self.row_base),
-                    context,
-                    "global",
-                )
-            })
-    }
-
-    fn evaluate_alignments(
-        &self,
-        current: &[SlotLuma],
-        excluded: Option<GridPosition>,
-        deltas: impl IntoIterator<Item = i32>,
-        context: &'static str,
-        search: &'static str,
-    ) -> Option<PageAlignment> {
-        let mut alignments = deltas
-            .into_iter()
-            .filter_map(|row_delta| {
-                let similarities = current
+    ) -> Option<PagePlacement> {
+        let pairs = page
+            .slot_luma
+            .iter()
+            .enumerate()
+            .flat_map(|(page_index, current)| {
+                self.slots
                     .iter()
-                    .filter_map(|slot| {
-                        let position = GridPosition {
-                            row: self.row_base + row_delta + slot.row as i32,
-                            col: slot.col,
-                        };
-                        if self.selected.contains(&position) || excluded == Some(position) {
-                            return None;
-                        }
-                        best_shifted_zncc(&self.slot_luma.get(&position)?.sample, slot)
+                    .enumerate()
+                    .filter(move |(index, mapped)| {
+                        let id = SlotId(*index);
+                        mapped.col == current.col
+                            && !self.selected.contains(&id)
+                            && excluded != Some(id)
                     })
-                    .collect::<Vec<_>>();
-                let support = similarities.len();
-                (support > 0).then(|| PageAlignment {
-                    row_delta,
-                    mean_zncc: similarities.iter().sum::<f32>() / support as f32,
-                    support,
-                })
+                    .filter_map(move |(_, mapped)| {
+                        let zncc = best_shifted_zncc(&mapped.sample, current)?;
+                        (zncc >= LANDMARK_MIN_ZNCC).then_some(PairMatch {
+                            page_index,
+                            offset_y: mapped.content_y - current.page_y,
+                            zncc,
+                        })
+                    })
             })
             .collect::<Vec<_>>();
-        alignments.sort_by(|left, right| {
+
+        let mut candidates = offset_hypotheses(&pairs)
+            .into_iter()
+            .filter(|&offset_y| self.direction_allows(offset_y, direction))
+            .filter_map(|offset_y| evaluate_alignment(&pairs, offset_y))
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| {
             right
-                .mean_zncc
-                .total_cmp(&left.mean_zncc)
-                .then_with(|| right.support.cmp(&left.support))
+                .support
+                .cmp(&left.support)
+                .then_with(|| right.mean_zncc.total_cmp(&left.mean_zncc))
         });
 
-        let best = *alignments.first()?;
-        let runner_up = alignments
-            .get(1)
-            .map_or(-1.0, |candidate| candidate.mean_zncc);
-        let margin = best.mean_zncc - runner_up;
-        let accepted =
-            best.mean_zncc >= PAGE_ALIGNMENT_MIN_MEAN_ZNCC && margin >= PAGE_ALIGNMENT_MIN_MARGIN;
+        let best = *candidates.first()?;
+        let runner_up = candidates.get(1).copied();
+        let margin = runner_up.map_or(1.0, |runner| best.mean_zncc - runner.mean_zncc);
+        let accepted = runner_up.is_none_or(|runner| {
+            best.support > runner.support || margin >= PAGE_ALIGNMENT_MIN_MARGIN
+        });
         debug!(
             context,
-            search,
-            best_delta = best.row_delta,
+            current_offset_y = self.current.offset_y,
+            best_offset_y = best.offset_y,
+            vertical_shift = self.current.offset_y - best.offset_y,
             best_mean_zncc = best.mean_zncc,
             best_support = best.support,
-            runner_up_mean_zncc = runner_up,
+            runner_up_mean_zncc = runner_up.map(|candidate| candidate.mean_zncc),
+            runner_up_support = runner_up.map(|candidate| candidate.support),
             margin,
             accepted,
-            candidates = ?alignments,
-            "slot-luma map alignment evaluated"
+            candidates = ?candidates.iter().take(8).collect::<Vec<_>>(),
+            "continuous slot-luma map alignment evaluated"
         );
-        accepted.then_some(best)
+        accepted
+            .then(|| self.placement_at_offset(page, best.offset_y, best.mean_zncc, best.support))
+    }
+
+    fn direction_allows(&self, offset_y: f32, direction: Option<ScrollDirection>) -> bool {
+        let movement = offset_y - self.current.offset_y;
+        match direction {
+            Some(ScrollDirection::Down) => movement >= -POSITION_TOLERANCE_PX,
+            Some(ScrollDirection::Up) => movement <= POSITION_TOLERANCE_PX,
+            None => true,
+        }
+    }
+
+    fn placement_at_offset(
+        &self,
+        page: &PageSnapshot,
+        offset_y: f32,
+        mean_zncc: f32,
+        support: usize,
+    ) -> PagePlacement {
+        let slots = page
+            .slot_luma
+            .iter()
+            .filter_map(|current| {
+                let content_y = current.page_y + offset_y;
+                let (index, _) = self
+                    .slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, mapped)| mapped.col == current.col)
+                    .map(|(index, mapped)| (index, (mapped.content_y - content_y).abs()))
+                    .filter(|(_, distance)| *distance <= POSITION_TOLERANCE_PX)
+                    .min_by(|left, right| left.1.total_cmp(&right.1))?;
+                Some(PlacedSlot {
+                    local: LocalPosition::of_luma(current),
+                    id: SlotId(index),
+                })
+            })
+            .collect();
+        PagePlacement {
+            offset_y,
+            mean_zncc,
+            support,
+            slots,
+        }
     }
 
     fn commit_page(
         &mut self,
         page: &PageSnapshot,
-        alignment: PageAlignment,
+        mut placement: PagePlacement,
         context: &'static str,
     ) {
-        self.row_base += alignment.row_delta;
-        self.record_page(page);
+        let min_y = page
+            .slot_luma
+            .iter()
+            .map(|slot| slot.page_y)
+            .min_by(f32::total_cmp)
+            .unwrap_or(0.0);
+        let max_y = page
+            .slot_luma
+            .iter()
+            .map(|slot| slot.page_y)
+            .max_by(f32::total_cmp)
+            .unwrap_or(0.0);
+
+        for current in &page.slot_luma {
+            let local = LocalPosition::of_luma(current);
+            let edge_clearance = (current.page_y - min_y).min(max_y - current.page_y);
+            if let Some(placed) = placement.slots.iter().find(|placed| placed.local == local) {
+                let mapped = &mut self.slots[placed.id.0];
+                if !self.selected.contains(&placed.id) && edge_clearance > mapped.edge_clearance {
+                    mapped.sample = current.clone();
+                    mapped.edge_clearance = edge_clearance;
+                }
+                continue;
+            }
+
+            let id = SlotId(self.slots.len());
+            self.slots.push(MapSlot {
+                col: current.col,
+                content_y: current.page_y + placement.offset_y,
+                sample: current.clone(),
+                edge_clearance,
+            });
+            placement.slots.push(PlacedSlot { local, id });
+        }
+
+        self.current = placement;
+        self.record_current(&page.roi);
+        self.record_candidates(&page.match_candidates);
         debug!(
-            row_base = self.row_base,
-            row_delta = alignment.row_delta,
-            mean_zncc = alignment.mean_zncc,
-            support = alignment.support,
-            mapped_slots = self.slot_luma.len(),
             context,
-            "temporary list map placed from global slot luma"
+            offset_y = self.current.offset_y,
+            mean_zncc = self.current.mean_zncc,
+            support = self.current.support,
+            mapped_slots = self.slots.len(),
+            "temporary list map placed in continuous list coordinates"
         );
     }
 
     pub(super) fn record_page(&mut self, page: &PageSnapshot) {
-        self.record_current(&page.roi);
-        self.record_slot_luma(&page.slot_luma);
-        self.record_candidates(&page.match_candidates);
+        let placement = self.placement_at_offset(
+            page,
+            self.current.offset_y,
+            self.current.mean_zncc,
+            self.current.support,
+        );
+        self.commit_page(page, placement, "same-viewport");
     }
 
     fn record_current(&mut self, page: &RoiObservation) {
@@ -291,68 +400,32 @@ impl ListMap {
             let Some(classification) = &slot.classification else {
                 continue;
             };
-            let position = GridPosition {
-                row: self.row_base + slot.row as i32,
-                col: slot.col,
-            };
-            if self.selected.contains(&position) {
+            let Some(id) = self.current_slot_id(slot) else {
                 continue;
-            }
-            self.items.insert(classification.item_id.clone(), position);
-        }
-    }
-
-    fn record_slot_luma(&mut self, slots: &[SlotLuma]) {
-        let Some(min_row) = slots.iter().map(|slot| slot.row).min() else {
-            return;
-        };
-        let max_row = slots.iter().map(|slot| slot.row).max().unwrap_or(min_row);
-
-        for slot in slots {
-            let position = GridPosition {
-                row: self.row_base + slot.row as i32,
-                col: slot.col,
             };
-            if self.selected.contains(&position) {
-                continue;
-            }
-            let interior_depth = (slot.row - min_row).min(max_row - slot.row);
-            let entry = self
-                .slot_luma
-                .entry(position)
-                .or_insert_with(|| MappedSlotLuma {
-                    sample: slot.clone(),
-                    interior_depth,
-                });
-            if interior_depth > entry.interior_depth {
-                *entry = MappedSlotLuma {
-                    sample: slot.clone(),
-                    interior_depth,
-                };
+            if !self.selected.contains(&id) {
+                self.items.insert(classification.item_id.clone(), id);
             }
         }
     }
 
     pub(super) fn mark_selected(&mut self, slot: &Slot) {
-        let position = GridPosition {
-            row: self.row_base + slot.row as i32,
-            col: slot.col,
+        let Some(id) = self.current_slot_id(slot) else {
+            return;
         };
-        self.selected.insert(position);
-        self.items.retain(|_, mapped| *mapped != position);
+        self.selected.insert(id);
+        self.items.retain(|_, mapped| *mapped != id);
         self.candidate_evidence.retain(|_, candidates| {
-            candidates.remove(&position);
+            candidates.remove(&id);
             !candidates.is_empty()
         });
         self.active_fallbacks
-            .retain(|_, candidate| candidate.position != position);
+            .retain(|_, candidate| candidate.slot_id != id);
     }
 
     pub(super) fn is_selected_slot(&self, slot: &Slot) -> bool {
-        self.selected.contains(&GridPosition {
-            row: self.row_base + slot.row as i32,
-            col: slot.col,
-        })
+        self.current_slot_id(slot)
+            .is_some_and(|id| self.selected.contains(&id))
     }
 
     pub(super) fn contains_item(&self, item_id: &str) -> bool {
@@ -361,22 +434,22 @@ impl ListMap {
 
     fn record_candidates(&mut self, candidates: &[TemplateMatchCandidate]) {
         for candidate in candidates {
+            let Some(slot_id) = self.current_slot_id(&candidate.slot) else {
+                continue;
+            };
             let mapped = MappedCandidate {
-                position: GridPosition {
-                    row: self.row_base + candidate.slot.row as i32,
-                    col: candidate.slot.col,
-                },
+                slot_id,
                 score: candidate.score,
                 match_margin: candidate.match_margin,
                 gate_quality: candidate.gate_quality,
             };
-            if self.selected.contains(&mapped.position) {
+            if self.selected.contains(&slot_id) {
                 continue;
             }
             self.candidate_evidence
                 .entry(candidate.item_id.clone())
                 .or_default()
-                .entry(mapped.position)
+                .entry(slot_id)
                 .and_modify(|evidence| evidence.record(mapped))
                 .or_insert_with(|| CandidateEvidence::new(mapped));
         }
@@ -386,15 +459,16 @@ impl ListMap {
         let candidates = self.candidate_evidence.get(item_id)?;
         let (candidate, observations) = candidates
             .values()
-            .filter(|evidence| !self.selected.contains(&evidence.best.position))
+            .filter(|evidence| !self.selected.contains(&evidence.best.slot_id))
             .map(|evidence| (evidence.candidate(), evidence.observations))
             .min_by(|(left, _), (right, _)| left.score.total_cmp(&right.score))?;
-        self.items.insert(item_id.to_string(), candidate.position);
+        self.items.insert(item_id.to_string(), candidate.slot_id);
         self.active_fallbacks.insert(item_id.to_string(), candidate);
+        let mapped = &self.slots[candidate.slot_id.0];
         debug!(
             item_id,
-            row = candidate.position.row,
-            col = candidate.position.col,
+            content_y = mapped.content_y,
+            col = mapped.col,
             score = candidate.score,
             observations,
             candidate_positions = candidates.len(),
@@ -408,20 +482,23 @@ impl ListMap {
         item_id: &str,
         page: &RoiObservation,
     ) -> Option<TemplateMatchCandidate> {
-        let position = *self.items.get(item_id)?;
-        if self.selected.contains(&position) {
+        let id = *self.items.get(item_id)?;
+        if self.selected.contains(&id) {
             return None;
         }
-        let local_row = position.row - self.row_base;
+        let local = self
+            .current
+            .slots
+            .iter()
+            .find(|placed| placed.id == id)?
+            .local;
         let slot = page.slots.iter().find(|slot| {
-            slot.kind.is_selectable_item_for(self.item_kind)
-                && slot.row as i32 == local_row
-                && slot.col == position.col
+            slot.kind.is_selectable_item_for(self.item_kind) && LocalPosition::of(slot) == local
         })?;
         let candidate = self.active_fallbacks.get(item_id).copied().or_else(|| {
             self.candidate_evidence
                 .get(item_id)?
-                .get(&position)
+                .get(&id)
                 .copied()
                 .map(CandidateEvidence::candidate)
         });
@@ -434,73 +511,105 @@ impl ListMap {
         })
     }
 
-    pub(super) fn navigation_hint(&self, item_id: &str, page: &RoiObservation) -> NavigationHint {
-        let Some(target) = self.items.get(item_id) else {
+    pub(super) fn navigation_hint(&self, item_id: &str) -> NavigationHint {
+        let Some(&target_id) = self.items.get(item_id) else {
             return NavigationHint::Scroll(ScrollDirection::Down);
         };
-        let Some((local_min, local_max)) = local_row_range(page, self.item_kind) else {
+        if self
+            .current
+            .slots
+            .iter()
+            .any(|placed| placed.id == target_id)
+        {
+            return NavigationHint::ExpectedVisible;
+        }
+
+        let target_y = self.slots[target_id.0].content_y;
+        let mut visible = self
+            .current
+            .slots
+            .iter()
+            .map(|placed| self.slots[placed.id.0].content_y);
+        let Some(first) = visible.next() else {
             return NavigationHint::ExpectedVisible;
         };
-        let visible_min = self.row_base + local_min;
-        let visible_max = self.row_base + local_max;
+        let (visible_min, visible_max) =
+            visible.fold((first, first), |(min, max), y| (min.min(y), max.max(y)));
 
-        if target.row < visible_min {
+        if target_y < visible_min {
             NavigationHint::Scroll(ScrollDirection::Up)
-        } else if target.row > visible_max {
+        } else if target_y > visible_max {
             NavigationHint::Scroll(ScrollDirection::Down)
         } else {
             NavigationHint::ExpectedVisible
         }
     }
+
+    fn current_slot_id(&self, slot: &Slot) -> Option<SlotId> {
+        let local = LocalPosition::of(slot);
+        self.current
+            .slots
+            .iter()
+            .find(|placed| placed.local == local)
+            .map(|placed| placed.id)
+    }
 }
 
-fn alignment_deltas(
-    mapped: &HashMap<GridPosition, MappedSlotLuma>,
-    current: &[SlotLuma],
-    row_base: i32,
-) -> Vec<i32> {
-    mapped
-        .keys()
-        .flat_map(|position| {
-            current
-                .iter()
-                .filter(move |slot| position.col == slot.col)
-                .map(move |slot| position.row - row_base - slot.row as i32)
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
+fn offset_hypotheses(pairs: &[PairMatch]) -> Vec<f32> {
+    let mut offsets = pairs.iter().map(|pair| pair.offset_y).collect::<Vec<_>>();
+    offsets.sort_unstable_by(f32::total_cmp);
+    let mut hypotheses = Vec::new();
+    let mut start = 0;
+    while start < offsets.len() {
+        let mut end = start + 1;
+        while end < offsets.len() && offsets[end] - offsets[end - 1] <= POSITION_TOLERANCE_PX {
+            end += 1;
+        }
+        hypotheses.push(interpolated_median(&offsets[start..end]));
+        start = end;
+    }
+    hypotheses
 }
 
-fn median_vertical_shift(
-    previous: &[Slot],
-    current: &[Slot],
-    row_delta: i32,
-    item_kind: ItemKind,
-) -> Option<f32> {
-    let mut shifts = current
+fn evaluate_alignment(pairs: &[PairMatch], offset_y: f32) -> Option<AlignmentCandidate> {
+    let mut best_by_page = HashMap::<usize, PairMatch>::new();
+    for &pair in pairs
         .iter()
-        .filter(|slot| slot.kind.is_selectable_item_for(item_kind))
-        .filter_map(|current_slot| {
-            let previous_row = current_slot.row as i32 + row_delta;
-            let previous_slot = previous.iter().find(|previous_slot| {
-                previous_slot.kind.is_selectable_item_for(item_kind)
-                    && previous_slot.row as i32 == previous_row
-                    && previous_slot.col == current_slot.col
-            })?;
-            Some(current_slot.center_f32().1 - previous_slot.center_f32().1)
-        })
-        .collect::<Vec<_>>();
-    if shifts.is_empty() {
+        .filter(|pair| (pair.offset_y - offset_y).abs() <= POSITION_TOLERANCE_PX)
+    {
+        best_by_page
+            .entry(pair.page_index)
+            .and_modify(|best| {
+                if pair.zncc > best.zncc {
+                    *best = pair;
+                }
+            })
+            .or_insert(pair);
+    }
+    let support = best_by_page.len();
+    if support == 0 {
         return None;
     }
-    shifts.sort_unstable_by(f32::total_cmp);
-    let middle = shifts.len() / 2;
-    Some(if shifts.len().is_multiple_of(2) {
-        0.5 * (shifts[middle - 1] + shifts[middle])
-    } else {
-        shifts[middle]
+    let mean_zncc = best_by_page.values().map(|pair| pair.zncc).sum::<f32>() / support as f32;
+    let mut refined_offsets = best_by_page
+        .values()
+        .map(|pair| pair.offset_y)
+        .collect::<Vec<_>>();
+    refined_offsets.sort_unstable_by(f32::total_cmp);
+    Some(AlignmentCandidate {
+        offset_y: interpolated_median(&refined_offsets),
+        mean_zncc,
+        support,
     })
+}
+
+fn interpolated_median(values: &[f32]) -> f32 {
+    let middle = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        0.5 * (values[middle - 1] + values[middle])
+    } else {
+        values[middle]
+    }
 }
 
 fn best_shifted_zncc(left: &SlotLuma, right: &SlotLuma) -> Option<f32> {
@@ -550,16 +659,4 @@ fn shifted_zncc(left: &SlotLuma, right: &SlotLuma, dy: i32) -> Option<f32> {
     let variance_right = sum_right_sq - sum_right * sum_right / count;
     let denominator = (variance_left * variance_right).sqrt();
     (denominator > 1e-8).then(|| (covariance / denominator).clamp(-1.0, 1.0) as f32)
-}
-
-fn local_row_range(page: &RoiObservation, item_kind: ItemKind) -> Option<(i32, i32)> {
-    let mut rows = page
-        .slots
-        .iter()
-        .filter(|slot| slot.kind.is_selectable_item_for(item_kind))
-        .map(|slot| slot.row as i32);
-    let first = rows.next()?;
-    Some(rows.fold((first, first), |(min, max), row| {
-        (min.min(row), max.max(row))
-    }))
 }

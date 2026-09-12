@@ -34,6 +34,7 @@ pub(super) struct PageSnapshot {
 pub(super) struct SlotLuma {
     pub(super) row: u32,
     pub(super) col: u32,
+    pub(super) page_y: f32,
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) center_x: f32,
@@ -258,6 +259,7 @@ impl PageNavigator {
                 SlotLuma {
                     row: slot.row,
                     col: slot.col,
+                    page_y: center_y,
                     width: core.w,
                     height: core.h,
                     center_x: center_x - core.x as f32,
