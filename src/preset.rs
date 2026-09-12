@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -85,6 +86,42 @@ pub(crate) fn load_presets(path: &Path) -> Result<BTreeMap<String, Preset>> {
         return Ok(BTreeMap::new());
     }
     Ok(load_preset_file(path)?.presets)
+}
+
+pub(crate) fn archive_legacy_preset_file(path: &Path) -> Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let document: serde_json::Value = parse_json_file(path)?;
+    let schema_version = document
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64);
+
+    match schema_version {
+        Some(version) if version == u64::from(PRESET_SCHEMA_VERSION) => return Ok(None),
+        Some(version) if version > u64::from(PRESET_SCHEMA_VERSION) => {
+            bail!(
+                "preset data uses schema version {version}, but this version only supports schema version {PRESET_SCHEMA_VERSION}"
+            );
+        }
+        _ => {}
+    }
+
+    let backup = path.with_file_name("presets.backup.json");
+    if backup.exists() {
+        fs::remove_file(&backup)
+            .with_context(|| format!("failed to replace {}", backup.display()))?;
+    }
+
+    fs::rename(path, &backup).with_context(|| {
+        format!(
+            "failed to archive legacy preset data from {} to {}",
+            path.display(),
+            backup.display()
+        )
+    })?;
+    Ok(Some(backup))
 }
 
 pub fn save_captured_preset(path: &Path, name: &str, captured: &CapturedPreset) -> Result<Preset> {

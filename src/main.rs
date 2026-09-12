@@ -46,7 +46,9 @@ use crate::capture::CaptureSessionManager;
 use crate::color_normalization::ColorNormalizer;
 use crate::game_settings::read_color_settings;
 use crate::loadout::bind_loadout_region;
-use crate::preset::{Preset, invalid_preset_reason, load_presets, validate_preset};
+use crate::preset::{
+    Preset, archive_legacy_preset_file, invalid_preset_reason, load_presets, validate_preset,
+};
 use crate::preset_action::{
     PresetActionConfig, PresetActionOutcome, PresetHotkeyBinding, handle_preset_hotkey,
     preset_hotkeys,
@@ -137,8 +139,17 @@ fn run() -> Result<()> {
     let config_path = app_path(CONFIG_RELATIVE_PATH)?;
     let presets_path = app_path(PRESETS_RELATIVE_PATH)?;
     let result = load_app_config(&config_path).and_then(|(config, notify_reset)| {
+        let legacy_presets = archive_legacy_preset_file(&presets_path)?;
         if notify_reset {
             show_config_reset(&config_path, &presets_path);
+        }
+        if let Some(backup_path) = legacy_presets {
+            info!(
+                path = %presets_path.display(),
+                backup = %backup_path.display(),
+                "legacy preset data archived"
+            );
+            show_preset_format_updated(&backup_path);
         }
         run_preset_hotkey_mode(config, &config_path, &presets_path)
     });
@@ -660,6 +671,24 @@ fn show_config_reset(config_path: &Path, presets_path: &Path) {
         config_path.display(),
     );
     let title = wide_null("HD2 Preset Helper - Configuration Updated");
+    let message = wide_null(&message);
+
+    unsafe {
+        let _ = MessageBoxW(
+            None,
+            PCWSTR(message.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND,
+        );
+    }
+}
+
+fn show_preset_format_updated(backup_path: &Path) {
+    let message = format!(
+        "The preset format changed in this version.\r\n\r\nPresets created by an earlier version cannot be used and must be recreated in game.\r\n\r\nThe old preset file was backed up to:\r\n{}\r\n\r\nYour configuration was not changed.",
+        backup_path.display(),
+    );
+    let title = wide_null("HD2 Preset Helper - Presets Updated");
     let message = wide_null(&message);
 
     unsafe {

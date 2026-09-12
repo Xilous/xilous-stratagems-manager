@@ -13,7 +13,8 @@ The program recognizes the game interface through screen capture and completes s
 3. Run `HD2PresetHelper.exe`.
 
 To update, extract the new `HD2PresetHelper` folder over the existing folder.
-Files in the `data` folder are preserved.
+Settings are preserved. If a release changes the preset format, the app backs
+up the old preset file and asks you to recreate the presets.
 
 The application runs in the system tray. Right-click its tray icon to change
 optional behavior or select **Exit** to close it.
