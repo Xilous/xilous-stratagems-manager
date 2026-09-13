@@ -62,6 +62,13 @@ impl SemanticImage {
     pub fn center(&self) -> (f32, f32) {
         (self.center_x, self.center_y)
     }
+
+    pub(crate) fn secondary_response_u8(&self) -> Vec<u8> {
+        self.pixels
+            .iter()
+            .map(|pixel| (pixel[1].clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect()
+    }
 }
 
 pub struct PreparedTemplate {

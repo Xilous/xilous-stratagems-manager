@@ -3,16 +3,15 @@ use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 use crate::item::ItemKind;
-use crate::vision::{ItemAvailability, RoiObservation, Slot, TemplateMatchCandidate};
+use crate::vision::{ItemAvailability, RoiObservation, Slot, SlotKind, TemplateMatchCandidate};
 
 use super::ScrollDirection;
-use super::page_navigation::{PageSnapshot, PageTurnInput, SlotLuma};
+use super::page_navigation::{PageSnapshot, PageTurnInput, SlotSample};
 
 #[cfg(feature = "diagnostics")]
 #[path = "list_map_diagnostics.rs"]
 mod diagnostics;
 
-const LANDMARK_MIN_ZNCC: f32 = 0.70;
 const PAGE_ALIGNMENT_MIN_MARGIN: f32 = 0.04;
 const POSITION_TOLERANCE_PX: f32 = 2.0;
 
@@ -33,7 +32,7 @@ impl LocalPosition {
         }
     }
 
-    const fn of_luma(slot: &SlotLuma) -> Self {
+    const fn of_sample(slot: &SlotSample) -> Self {
         Self {
             row: slot.row,
             col: slot.col,
@@ -85,7 +84,7 @@ impl CandidateEvidence {
 struct MapSlot {
     col: u32,
     content_y: f32,
-    sample: SlotLuma,
+    sample: SlotSample,
     edge_clearance: f32,
 }
 
@@ -98,22 +97,23 @@ struct PlacedSlot {
 #[derive(Clone, Debug)]
 struct PagePlacement {
     offset_y: f32,
-    mean_zncc: f32,
+    mean_score: f32,
     support: usize,
     slots: Vec<PlacedSlot>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct PairMatch {
-    page_index: usize,
-    offset_y: f32,
-    zncc: f32,
+#[derive(Clone, Copy)]
+struct AlignmentConstraints {
+    direction: ScrollDirection,
+    expected_offset_y: Option<f32>,
+    allow_stationary: bool,
+    excluded: Option<SlotId>,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct AlignmentCandidate {
     offset_y: f32,
-    mean_zncc: f32,
+    mean_score: f32,
     support: usize,
 }
 
@@ -137,6 +137,7 @@ pub(super) struct ListMap {
     candidate_evidence: HashMap<String, HashMap<SlotId, CandidateEvidence>>,
     active_fallbacks: HashMap<String, MappedCandidate>,
     selected: HashSet<SlotId>,
+    no_booster_option: Option<SlotId>,
 }
 
 impl ListMap {
@@ -146,23 +147,48 @@ impl ListMap {
             slots: Vec::new(),
             current: PagePlacement {
                 offset_y: 0.0,
-                mean_zncc: 1.0,
-                support: page.slot_luma.len(),
+                mean_score: 1.0,
+                support: page.slot_samples.len(),
                 slots: Vec::new(),
             },
             items: HashMap::new(),
             candidate_evidence: HashMap::new(),
             active_fallbacks: HashMap::new(),
             selected: HashSet::new(),
+            no_booster_option: None,
         };
-        let initial = map.placement_at_offset(page, 0.0, 1.0, page.slot_luma.len());
+        let initial = map.placement_at_offset(page, 0.0, 1.0, page.slot_samples.len());
         map.commit_page(page, initial, "initial");
+        map.no_booster_option = page
+            .roi
+            .slots
+            .iter()
+            .find(|slot| slot.kind == SlotKind::NoBoosterOption)
+            .and_then(|slot| map.current_slot_id(slot));
         map
     }
 
-    pub(super) fn advance(&mut self, page: &PageSnapshot, input: PageTurnInput) -> bool {
-        let Some(placement) = self.find_placement(page, Some(input.direction()), None, "page-turn")
-        else {
+    pub(super) fn advance(
+        &mut self,
+        page: &PageSnapshot,
+        input: PageTurnInput,
+        directed_shift: Option<f32>,
+    ) -> bool {
+        let direction = input.direction();
+        let expected_offset_y = directed_shift.map(|shift| match direction {
+            ScrollDirection::Down => self.current.offset_y + shift,
+            ScrollDirection::Up => self.current.offset_y - shift,
+        });
+        let Some(placement) = self.find_placement(
+            page,
+            AlignmentConstraints {
+                direction,
+                expected_offset_y,
+                allow_stationary: false,
+                excluded: None,
+            },
+            "page-turn",
+        ) else {
             return false;
         };
         self.commit_page(page, placement, "page-turn");
@@ -175,13 +201,31 @@ impl ListMap {
         clicked_slot: &Slot,
     ) -> Option<PostClickPlacement> {
         let clicked_id = self.current_slot_id(clicked_slot)?;
-        let placement = self.find_placement(page, None, Some(clicked_id), "post-click")?;
+        let clicked_y = self.slots[clicked_id.0].content_y;
+        let (visible_min, visible_max) = self.visible_content_y_range()?;
+        let visible_midpoint = 0.5 * (visible_min + visible_max);
+        let expected_direction = if clicked_y <= visible_midpoint {
+            ScrollDirection::Up
+        } else {
+            ScrollDirection::Down
+        };
+        let placement = self.find_placement(
+            page,
+            AlignmentConstraints {
+                direction: expected_direction,
+                expected_offset_y: None,
+                allow_stationary: true,
+                excluded: Some(clicked_id),
+            },
+            "post-click",
+        )?;
         let vertical_shift = self.current.offset_y - placement.offset_y;
         debug!(
             offset_y = placement.offset_y,
             vertical_shift,
+            ?expected_direction,
             support = placement.support,
-            mean_zncc = placement.mean_zncc,
+            mean_score = placement.mean_score,
             "post-click page located in temporary list map"
         );
         Some(PostClickPlacement {
@@ -220,79 +264,159 @@ impl ListMap {
     fn find_placement(
         &self,
         page: &PageSnapshot,
-        direction: Option<ScrollDirection>,
-        excluded: Option<SlotId>,
+        constraints: AlignmentConstraints,
         context: &'static str,
     ) -> Option<PagePlacement> {
-        let pairs = page
-            .slot_luma
-            .iter()
-            .enumerate()
-            .filter_map(|(page_index, current)| {
-                self.slots
-                    .iter()
-                    .enumerate()
-                    .filter(move |(index, mapped)| {
-                        let id = SlotId(*index);
-                        mapped.col == current.col
-                            && !self.selected.contains(&id)
-                            && excluded != Some(id)
-                    })
-                    .filter_map(move |(_, mapped)| {
-                        let zncc = best_shifted_zncc(&mapped.sample, current)?;
-                        Some(PairMatch {
-                            page_index,
-                            offset_y: mapped.content_y - current.page_y,
-                            zncc,
-                        })
-                    })
-                    .max_by(|left, right| left.zncc.total_cmp(&right.zncc))
-                    .filter(|pair| pair.zncc >= LANDMARK_MIN_ZNCC)
-            })
-            .collect::<Vec<_>>();
-
-        let mut candidates = offset_hypotheses(&pairs)
-            .into_iter()
-            .filter(|&offset_y| self.direction_allows(offset_y, direction))
-            .filter_map(|offset_y| evaluate_alignment(&pairs, offset_y))
-            .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| {
-            right
-                .support
-                .cmp(&left.support)
-                .then_with(|| right.mean_zncc.total_cmp(&left.mean_zncc))
-        });
-
-        let best = *candidates.first()?;
+        let candidates = self.alignment_candidates(page, constraints);
+        let best = candidates.first().copied();
+        let best = best?;
         let runner_up = candidates.get(1).copied();
-        let margin = runner_up.map_or(1.0, |runner| best.mean_zncc - runner.mean_zncc);
+        let margin = runner_up.map_or(1.0, |runner| best.mean_score - runner.mean_score);
         let accepted = runner_up.is_none_or(|runner| {
             best.support > runner.support || margin >= PAGE_ALIGNMENT_MIN_MARGIN
         });
         debug!(
             context,
+            direction = ?constraints.direction,
             current_offset_y = self.current.offset_y,
+            expected_offset_y = constraints.expected_offset_y,
             best_offset_y = best.offset_y,
             vertical_shift = self.current.offset_y - best.offset_y,
-            best_mean_zncc = best.mean_zncc,
+            algorithm = "semantic_cosine",
+            best_mean_score = best.mean_score,
             best_support = best.support,
-            runner_up_mean_zncc = runner_up.map(|candidate| candidate.mean_zncc),
+            runner_up_mean_score = runner_up.map(|candidate| candidate.mean_score),
             runner_up_support = runner_up.map(|candidate| candidate.support),
             margin,
             accepted,
             candidates = ?candidates.iter().take(8).collect::<Vec<_>>(),
-            "continuous slot-luma map alignment evaluated"
+            "continuous slot map alignment evaluated"
         );
         accepted
-            .then(|| self.placement_at_offset(page, best.offset_y, best.mean_zncc, best.support))
+            .then(|| self.placement_at_offset(page, best.offset_y, best.mean_score, best.support))
     }
 
-    fn direction_allows(&self, offset_y: f32, direction: Option<ScrollDirection>) -> bool {
+    fn alignment_candidates(
+        &self,
+        page: &PageSnapshot,
+        constraints: AlignmentConstraints,
+    ) -> Vec<AlignmentCandidate> {
+        let offsets = page.slot_samples.iter().flat_map(|current| {
+            self.slots
+                .iter()
+                .enumerate()
+                .filter(move |(index, mapped)| {
+                    let id = SlotId(*index);
+                    mapped.col == current.col
+                        && !self.selected.contains(&id)
+                        && self.no_booster_option != Some(id)
+                        && constraints.excluded != Some(id)
+                })
+                .map(move |(_, mapped)| mapped.content_y - current.page_y)
+                .filter(move |offset_y| {
+                    constraints.expected_offset_y.is_none_or(|expected| {
+                        (*offset_y - expected).abs() <= POSITION_TOLERANCE_PX
+                    })
+                })
+        });
+        let mut candidates = offset_hypotheses(offsets)
+            .into_iter()
+            .filter(|&offset_y| {
+                self.direction_allows(
+                    offset_y,
+                    constraints.direction,
+                    constraints.allow_stationary,
+                )
+            })
+            .filter_map(|offset_y| self.evaluate_alignment(page, offset_y, constraints.excluded))
+            .collect::<Vec<_>>();
+
+        // Prefer page-level evidence. A single overlapping slot remains a
+        // fallback only when no candidate contains two or more observations.
+        if candidates.iter().any(|candidate| candidate.support >= 2) {
+            candidates.retain(|candidate| candidate.support >= 2);
+        }
+        candidates.sort_by(compare_alignment);
+        candidates
+    }
+
+    fn evaluate_alignment(
+        &self,
+        page: &PageSnapshot,
+        offset_y: f32,
+        excluded: Option<SlotId>,
+    ) -> Option<AlignmentCandidate> {
+        let mut scores = Vec::new();
+        let mut offsets = Vec::new();
+
+        for current in &page.slot_samples {
+            let expected_y = current.page_y + offset_y;
+            let Some((mapped, mapped_offset)) = self
+                .slots
+                .iter()
+                .enumerate()
+                .filter(|(index, mapped)| {
+                    let id = SlotId(*index);
+                    mapped.col == current.col
+                        && !self.selected.contains(&id)
+                        && self.no_booster_option != Some(id)
+                        && excluded != Some(id)
+                })
+                .map(|(_, mapped)| {
+                    (
+                        mapped,
+                        mapped.content_y - current.page_y,
+                        (mapped.content_y - expected_y).abs(),
+                    )
+                })
+                .filter(|(_, _, distance)| *distance <= POSITION_TOLERANCE_PX)
+                .min_by(|left, right| left.2.total_cmp(&right.2))
+                .map(|(mapped, mapped_offset, _)| (mapped, mapped_offset))
+            else {
+                continue;
+            };
+            let Some(score) = best_shifted_response_cosine(&mapped.sample, current) else {
+                continue;
+            };
+            scores.push(score);
+            offsets.push(mapped_offset);
+        }
+
+        if scores.is_empty() {
+            return None;
+        }
+        offsets.sort_unstable_by(f32::total_cmp);
+        Some(AlignmentCandidate {
+            offset_y: interpolated_median(&offsets),
+            mean_score: scores.iter().sum::<f32>() / scores.len() as f32,
+            support: scores.len(),
+        })
+    }
+
+    fn direction_allows(
+        &self,
+        offset_y: f32,
+        direction: ScrollDirection,
+        allow_stationary: bool,
+    ) -> bool {
         let movement = offset_y - self.current.offset_y;
         match direction {
-            Some(ScrollDirection::Down) => movement >= -POSITION_TOLERANCE_PX,
-            Some(ScrollDirection::Up) => movement <= POSITION_TOLERANCE_PX,
-            None => true,
+            ScrollDirection::Up => {
+                movement
+                    <= if allow_stationary {
+                        POSITION_TOLERANCE_PX
+                    } else {
+                        -POSITION_TOLERANCE_PX
+                    }
+            }
+            ScrollDirection::Down => {
+                movement
+                    >= if allow_stationary {
+                        -POSITION_TOLERANCE_PX
+                    } else {
+                        POSITION_TOLERANCE_PX
+                    }
+            }
         }
     }
 
@@ -300,11 +424,11 @@ impl ListMap {
         &self,
         page: &PageSnapshot,
         offset_y: f32,
-        mean_zncc: f32,
+        mean_score: f32,
         support: usize,
     ) -> PagePlacement {
         let slots = page
-            .slot_luma
+            .slot_samples
             .iter()
             .filter_map(|current| {
                 let content_y = current.page_y + offset_y;
@@ -317,14 +441,14 @@ impl ListMap {
                     .filter(|(_, distance)| *distance <= POSITION_TOLERANCE_PX)
                     .min_by(|left, right| left.1.total_cmp(&right.1))?;
                 Some(PlacedSlot {
-                    local: LocalPosition::of_luma(current),
+                    local: LocalPosition::of_sample(current),
                     id: SlotId(index),
                 })
             })
             .collect();
         PagePlacement {
             offset_y,
-            mean_zncc,
+            mean_score,
             support,
             slots,
         }
@@ -337,20 +461,20 @@ impl ListMap {
         context: &'static str,
     ) {
         let min_y = page
-            .slot_luma
+            .slot_samples
             .iter()
             .map(|slot| slot.page_y)
             .min_by(f32::total_cmp)
             .unwrap_or(0.0);
         let max_y = page
-            .slot_luma
+            .slot_samples
             .iter()
             .map(|slot| slot.page_y)
             .max_by(f32::total_cmp)
             .unwrap_or(0.0);
 
-        for current in &page.slot_luma {
-            let local = LocalPosition::of_luma(current);
+        for current in &page.slot_samples {
+            let local = LocalPosition::of_sample(current);
             let edge_clearance = (current.page_y - min_y).min(max_y - current.page_y);
             if let Some(placed) = placement.slots.iter().find(|placed| placed.local == local) {
                 let mapped = &mut self.slots[placed.id.0];
@@ -377,7 +501,7 @@ impl ListMap {
         debug!(
             context,
             offset_y = self.current.offset_y,
-            mean_zncc = self.current.mean_zncc,
+            mean_score = self.current.mean_score,
             support = self.current.support,
             mapped_slots = self.slots.len(),
             "temporary list map placed in continuous list coordinates"
@@ -388,7 +512,7 @@ impl ListMap {
         let placement = self.placement_at_offset(
             page,
             self.current.offset_y,
-            self.current.mean_zncc,
+            self.current.mean_score,
             self.current.support,
         );
         self.commit_page(page, placement, "same-viewport");
@@ -406,7 +530,7 @@ impl ListMap {
             let Some(id) = self.current_slot_id(slot) else {
                 continue;
             };
-            if !self.selected.contains(&id) {
+            if self.no_booster_option != Some(id) && !self.selected.contains(&id) {
                 self.items.insert(classification.item_id.clone(), id);
             }
         }
@@ -426,9 +550,9 @@ impl ListMap {
             .retain(|_, candidate| candidate.slot_id != id);
     }
 
-    pub(super) fn is_selected_slot(&self, slot: &Slot) -> bool {
+    pub(super) fn can_select_slot(&self, slot: &Slot) -> bool {
         self.current_slot_id(slot)
-            .is_some_and(|id| self.selected.contains(&id))
+            .is_some_and(|id| self.no_booster_option != Some(id) && !self.selected.contains(&id))
     }
 
     pub(super) fn contains_item(&self, item_id: &str) -> bool {
@@ -447,7 +571,7 @@ impl ListMap {
                 gate_quality: candidate.gate_quality,
                 availability: candidate.availability,
             };
-            if self.selected.contains(&slot_id) {
+            if self.no_booster_option == Some(slot_id) || self.selected.contains(&slot_id) {
                 continue;
             }
             self.candidate_evidence
@@ -532,16 +656,9 @@ impl ListMap {
         }
 
         let target_y = self.slots[target_id.0].content_y;
-        let mut visible = self
-            .current
-            .slots
-            .iter()
-            .map(|placed| self.slots[placed.id.0].content_y);
-        let Some(first) = visible.next() else {
+        let Some((visible_min, visible_max)) = self.visible_content_y_range() else {
             return NavigationHint::ExpectedVisible;
         };
-        let (visible_min, visible_max) =
-            visible.fold((first, first), |(min, max), y| (min.min(y), max.max(y)));
 
         if target_y < visible_min {
             NavigationHint::Scroll(ScrollDirection::Up)
@@ -550,6 +667,16 @@ impl ListMap {
         } else {
             NavigationHint::ExpectedVisible
         }
+    }
+
+    fn visible_content_y_range(&self) -> Option<(f32, f32)> {
+        let mut visible = self
+            .current
+            .slots
+            .iter()
+            .map(|placed| self.slots[placed.id.0].content_y);
+        let first = visible.next()?;
+        Some(visible.fold((first, first), |(min, max), y| (min.min(y), max.max(y))))
     }
 
     fn current_slot_id(&self, slot: &Slot) -> Option<SlotId> {
@@ -562,8 +689,8 @@ impl ListMap {
     }
 }
 
-fn offset_hypotheses(pairs: &[PairMatch]) -> Vec<f32> {
-    let mut offsets = pairs.iter().map(|pair| pair.offset_y).collect::<Vec<_>>();
+fn offset_hypotheses(offsets: impl Iterator<Item = f32>) -> Vec<f32> {
+    let mut offsets = offsets.collect::<Vec<_>>();
     offsets.sort_unstable_by(f32::total_cmp);
     let mut hypotheses = Vec::new();
     let mut start = 0;
@@ -578,38 +705,6 @@ fn offset_hypotheses(pairs: &[PairMatch]) -> Vec<f32> {
     hypotheses
 }
 
-fn evaluate_alignment(pairs: &[PairMatch], offset_y: f32) -> Option<AlignmentCandidate> {
-    let mut best_by_page = HashMap::<usize, PairMatch>::new();
-    for &pair in pairs
-        .iter()
-        .filter(|pair| (pair.offset_y - offset_y).abs() <= POSITION_TOLERANCE_PX)
-    {
-        best_by_page
-            .entry(pair.page_index)
-            .and_modify(|best| {
-                if pair.zncc > best.zncc {
-                    *best = pair;
-                }
-            })
-            .or_insert(pair);
-    }
-    let support = best_by_page.len();
-    if support == 0 {
-        return None;
-    }
-    let mean_zncc = best_by_page.values().map(|pair| pair.zncc).sum::<f32>() / support as f32;
-    let mut refined_offsets = best_by_page
-        .values()
-        .map(|pair| pair.offset_y)
-        .collect::<Vec<_>>();
-    refined_offsets.sort_unstable_by(f32::total_cmp);
-    Some(AlignmentCandidate {
-        offset_y: interpolated_median(&refined_offsets),
-        mean_zncc,
-        support,
-    })
-}
-
 fn interpolated_median(values: &[f32]) -> f32 {
     let middle = values.len() / 2;
     if values.len().is_multiple_of(2) {
@@ -619,21 +714,26 @@ fn interpolated_median(values: &[f32]) -> f32 {
     }
 }
 
-fn best_shifted_zncc(left: &SlotLuma, right: &SlotLuma) -> Option<f32> {
+fn compare_alignment(left: &AlignmentCandidate, right: &AlignmentCandidate) -> std::cmp::Ordering {
+    right
+        .mean_score
+        .total_cmp(&left.mean_score)
+        .then_with(|| right.support.cmp(&left.support))
+}
+
+fn best_shifted_response_cosine(left: &SlotSample, right: &SlotSample) -> Option<f32> {
     (-1..=1)
-        .filter_map(|dy| shifted_zncc(left, right, dy))
+        .filter_map(|dy| shifted_response_cosine(left, right, dy))
         .max_by(f32::total_cmp)
 }
 
-fn shifted_zncc(left: &SlotLuma, right: &SlotLuma, dy: i32) -> Option<f32> {
+fn shifted_response_cosine(left: &SlotSample, right: &SlotSample, dy: i32) -> Option<f32> {
     let offset_x = (right.center_x - left.center_x).round() as i32;
     let offset_y = (right.center_y - left.center_y).round() as i32 + dy;
-    let mut count = 0.0f64;
-    let mut sum_left = 0.0f64;
-    let mut sum_right = 0.0f64;
-    let mut sum_left_sq = 0.0f64;
-    let mut sum_right_sq = 0.0f64;
-    let mut sum_product = 0.0f64;
+    let mut count = 0usize;
+    let mut dot = 0.0f64;
+    let mut left_sq = 0.0f64;
+    let mut right_sq = 0.0f64;
 
     for left_y in 0..left.height as i32 {
         let right_y = left_y + offset_y;
@@ -646,24 +746,19 @@ fn shifted_zncc(left: &SlotLuma, right: &SlotLuma, dy: i32) -> Option<f32> {
                 continue;
             }
             let left_value =
-                left.pixels[left_y as usize * left.width as usize + left_x as usize] as f64;
+                left.response[left_y as usize * left.width as usize + left_x as usize] as f64;
             let right_value =
-                right.pixels[right_y as usize * right.width as usize + right_x as usize] as f64;
-            count += 1.0;
-            sum_left += left_value;
-            sum_right += right_value;
-            sum_left_sq += left_value * left_value;
-            sum_right_sq += right_value * right_value;
-            sum_product += left_value * right_value;
+                right.response[right_y as usize * right.width as usize + right_x as usize] as f64;
+            count += 1;
+            dot += left_value * right_value;
+            left_sq += left_value * left_value;
+            right_sq += right_value * right_value;
         }
     }
 
-    if count < 64.0 {
+    if count < 64 {
         return None;
     }
-    let covariance = sum_product - sum_left * sum_right / count;
-    let variance_left = sum_left_sq - sum_left * sum_left / count;
-    let variance_right = sum_right_sq - sum_right * sum_right / count;
-    let denominator = (variance_left * variance_right).sqrt();
-    (denominator > 1e-8).then(|| (covariance / denominator).clamp(-1.0, 1.0) as f32)
+    let denominator = (left_sq * right_sq).sqrt();
+    (denominator > 1e-8).then(|| (dot / denominator).clamp(0.0, 1.0) as f32)
 }

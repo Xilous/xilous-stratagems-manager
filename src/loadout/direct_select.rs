@@ -188,7 +188,7 @@ fn select_items_from_open_list(
     let mut current_page = {
         let span = debug_span!("scan_page", wheel_attempts);
         let _guard = span.enter();
-        navigator.prepare_direct_page(initial_observation)?
+        navigator.prepare_initial_page(initial_observation)?
     };
     let mut list_map = ListMap::new(&current_page, item_kind);
 
@@ -202,7 +202,7 @@ fn select_items_from_open_list(
         let _page_guard = page_span.enter();
         let target = if apply_in_saved_order {
             find_visible_target(&current_page.roi, &remaining[0], item_kind)
-                .filter(|target| !list_map.is_selected_slot(&target.slot))
+                .filter(|target| list_map.can_select_slot(&target.slot))
                 .or_else(|| {
                     list_map
                         .visible_mapped_target(&remaining[0], &current_page.roi)
@@ -210,7 +210,7 @@ fn select_items_from_open_list(
                 })
         } else {
             next_visible_target(&current_page.roi, &remaining, item_kind, |slot| {
-                !list_map.is_selected_slot(slot)
+                list_map.can_select_slot(slot)
             })
             .or_else(|| {
                 remaining.iter().find_map(|item_id| {
@@ -326,9 +326,13 @@ fn select_items_from_open_list(
             input,
             wheel_attempt,
         )? {
-            PageTurnResult::Moved { page, short } => {
+            PageTurnResult::Moved {
+                page,
+                short,
+                directed_shift,
+            } => {
                 wheel_attempts = wheel_attempt;
-                if list_map.advance(&page, input) {
+                if list_map.advance(&page, input, directed_shift) {
                     current_page = page;
                     boundary_candidate = (input.is_full() && short).then_some(direction);
                     if boundary_candidate.is_some() {
@@ -365,7 +369,7 @@ fn select_items_from_open_list(
                         );
                     }
                 };
-                if !list_map.advance(&recovered, recovery) {
+                if !list_map.advance(&recovered, recovery, None) {
                     bail!(
                         "neither the page turn nor the page after a recovery nudge could be placed in the temporary list map"
                     );

@@ -107,6 +107,10 @@ pub(super) fn extract(sample: &ImageSample) -> Result<SemanticExtraction> {
     })
 }
 
+pub(super) fn glyph_response(sample: &ImageSample) -> Result<Vec<u8>> {
+    Ok(extract(sample)?.image.secondary_response_u8())
+}
+
 pub(super) fn yellow_luma(extraction: &SemanticExtraction) -> f32 {
     luma(extraction.secondary_endpoint)
 }

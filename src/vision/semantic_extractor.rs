@@ -17,6 +17,23 @@ const CATEGORIES: [StratagemCategory; 3] = [
     StratagemCategory::Supply,
 ];
 
+pub(super) fn stratagem_foreground_response(r: u8, g: u8, b: u8) -> u8 {
+    let pixel = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
+    let response = CATEGORIES
+        .into_iter()
+        .map(|category| {
+            let [class, white] = project_triangle(
+                pixel,
+                FIXED_BACKGROUND,
+                FIXED_WHITE,
+                fixed_class_endpoint(category),
+            );
+            class + white
+        })
+        .fold(0.0, f32::max);
+    (response.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 pub struct SemanticExtraction {
     pub image: SemanticImage,
     pub mode: &'static str,

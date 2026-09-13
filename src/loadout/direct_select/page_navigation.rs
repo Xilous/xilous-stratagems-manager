@@ -7,8 +7,8 @@ use tracing::{debug, debug_span, trace};
 use crate::automation::AutomationSession;
 use crate::item::ItemKind;
 use crate::vision::{
-    RecognizerSession, RoiObservation, SlotLayout, TemplateClassifier, TemplateMatchCandidate,
-    luma601_u8, slot_core_rect,
+    RecognizerSession, RoiObservation, SlotKind, SlotLayout, TemplateClassifier,
+    TemplateMatchCandidate, slot_core_rect,
 };
 
 use super::super::frame::{fingerprint_distance, image_fingerprint};
@@ -27,11 +27,11 @@ pub(super) struct PageSnapshot {
     pub(super) roi: RoiObservation,
     pub(super) signature: Vec<u8>,
     pub(super) match_candidates: Vec<TemplateMatchCandidate>,
-    pub(super) slot_luma: Vec<SlotLuma>,
+    pub(super) slot_samples: Vec<SlotSample>,
 }
 
 #[derive(Clone)]
-pub(super) struct SlotLuma {
+pub(super) struct SlotSample {
     pub(super) row: u32,
     pub(super) col: u32,
     pub(super) page_y: f32,
@@ -39,7 +39,7 @@ pub(super) struct SlotLuma {
     pub(super) height: u32,
     pub(super) center_x: f32,
     pub(super) center_y: f32,
-    pub(super) pixels: Vec<u8>,
+    pub(super) response: Vec<u8>,
 }
 
 pub(super) struct PageNavigator {
@@ -49,7 +49,11 @@ pub(super) struct PageNavigator {
 }
 
 pub(super) enum PageTurnResult {
-    Moved { page: PageSnapshot, short: bool },
+    Moved {
+        page: PageSnapshot,
+        short: bool,
+        directed_shift: Option<f32>,
+    },
     NoMovement(PageSnapshot),
 }
 
@@ -187,6 +191,7 @@ impl PageNavigator {
                     return Ok(PageTurnResult::Moved {
                         page: candidate,
                         short,
+                        directed_shift: Some(shift.directed_shift),
                     });
                 }
                 relation @ (PageRelation::DifferentViewport | PageRelation::Uncertain) => {
@@ -199,6 +204,7 @@ impl PageNavigator {
                     return Ok(PageTurnResult::Moved {
                         page: candidate,
                         short: false,
+                        directed_shift: None,
                     });
                 }
                 PageRelation::SameViewport => {
@@ -219,44 +225,57 @@ impl PageNavigator {
     }
 
     pub(super) fn scan_direct_page(&self, image: RgbaImage) -> Result<PageSnapshot> {
-        let roi = self
+        let mut roi = self
             .recognizer
             .detect(image, SlotLayout::List(self.item_kind))?;
-        self.prepare_direct_page(roi)
+        if self.item_kind == ItemKind::Booster {
+            // Only the initially opened page is known to be at the top. Later
+            // pages let the temporary map identify the global no-booster cell.
+            for slot in &mut roi.slots {
+                if slot.kind == SlotKind::NoBoosterOption {
+                    slot.kind = SlotKind::Booster;
+                }
+            }
+        }
+        self.prepare_page(roi)
     }
 
-    pub(super) fn prepare_direct_page(&self, mut roi: RoiObservation) -> Result<PageSnapshot> {
+    pub(super) fn prepare_initial_page(&self, roi: RoiObservation) -> Result<PageSnapshot> {
+        self.prepare_page(roi)
+    }
+
+    fn prepare_page(&self, mut roi: RoiObservation) -> Result<PageSnapshot> {
         let match_candidates = self.classifier.classify_batch(&mut roi)?;
-        Ok(self.finish_direct_page(roi, match_candidates))
+        self.finish_direct_page(roi, match_candidates)
     }
 
     fn finish_direct_page(
         &self,
         roi: RoiObservation,
         match_candidates: Vec<TemplateMatchCandidate>,
-    ) -> PageSnapshot {
+    ) -> Result<PageSnapshot> {
         let signature = {
             let span = debug_span!("roi_fingerprint");
             let _guard = span.enter();
             image_fingerprint(&roi.image)
         };
-        let slot_luma = roi
+        let slot_samples = roi
             .slots
             .iter()
-            .filter(|slot| slot.kind.is_selectable_item_for(self.item_kind))
-            .map(|slot| {
+            .filter(|slot| {
+                slot.kind.is_selectable_item_for(self.item_kind)
+                    || (self.item_kind == ItemKind::Booster
+                        && slot.kind == SlotKind::NoBoosterOption)
+            })
+            .map(|slot| -> Result<_> {
                 let core = slot_core_rect(slot);
-                let image = &roi.image;
-                let pixels = (core.y..core.y + core.h)
-                    .flat_map(move |y| {
-                        (core.x..core.x + core.w).map(move |x| {
-                            let [r, g, b, _] = image.get_pixel(x, y).0;
-                            luma601_u8(r, g, b)
-                        })
-                    })
-                    .collect();
+                let response = if slot.kind == SlotKind::NoBoosterOption {
+                    vec![0; (core.w * core.h) as usize]
+                } else {
+                    self.classifier.alignment_response(&roi.image, slot)?
+                };
                 let (center_x, center_y) = slot.center_f32();
-                SlotLuma {
+                Ok(SlotSample {
                     row: slot.row,
                     col: slot.col,
                     page_y: center_y,
@@ -264,16 +283,16 @@ impl PageNavigator {
                     height: core.h,
                     center_x: center_x - core.x as f32,
                     center_y: center_y - core.y as f32,
-                    pixels,
-                }
+                    response,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
-        PageSnapshot {
+        Ok(PageSnapshot {
             roi,
             signature,
             match_candidates,
-            slot_luma,
-        }
+            slot_samples,
+        })
     }
 }

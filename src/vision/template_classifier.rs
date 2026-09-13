@@ -12,7 +12,9 @@ use super::matcher::{
     MATCH_THRESHOLD, MatchDomain, PreparedTemplate, SemanticImage, compare, prepare_template,
     render_to_raster,
 };
-use super::semantic_extractor::{SemanticExtraction, SemanticSource, crop_slot_sample};
+use super::semantic_extractor::{
+    SemanticExtraction, SemanticSource, crop_slot_sample, stratagem_foreground_response,
+};
 use super::{Classification, ImageSample, ItemAvailability, RoiObservation, Slot, SlotLayout};
 
 const CANDIDATE_PHYSICAL_SIZE: f32 = 51.0;
@@ -213,6 +215,27 @@ impl TemplateClassifier {
             candidate_physical_size,
             match_threshold,
         })
+    }
+
+    pub(crate) fn alignment_response(
+        &self,
+        screenshot: &RgbaImage,
+        slot: &Slot,
+    ) -> Result<Vec<u8>> {
+        let sample = crop_sample(
+            self.item_kind,
+            screenshot,
+            slot,
+            self.candidate_physical_size,
+        )?;
+        match self.item_kind {
+            ItemKind::Stratagem => Ok(sample
+                .image
+                .pixels()
+                .map(|pixel| stratagem_foreground_response(pixel[0], pixel[1], pixel[2]))
+                .collect()),
+            ItemKind::Booster => booster::glyph_response(&sample),
+        }
     }
 
     pub fn classify_batch(&self, page: &mut RoiObservation) -> Result<Vec<TemplateMatchCandidate>> {

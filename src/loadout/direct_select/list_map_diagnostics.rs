@@ -57,9 +57,9 @@ fn render(map: &ListMap) -> Option<RgbaImage> {
         let y = cell_y + CELL_PADDING;
         for sample_y in 0..sample.height {
             for sample_x in 0..sample.width {
-                let luma =
-                    sample.pixels[sample_y as usize * sample.width as usize + sample_x as usize];
-                image.put_pixel(x + sample_x, y + sample_y, Rgba([luma, luma, luma, 255]));
+                let index = sample_y as usize * sample.width as usize + sample_x as usize;
+                let value = sample.response[index];
+                image.put_pixel(x + sample_x, y + sample_y, Rgba([value, value, value, 255]));
             }
         }
         let border = if map.selected.contains(&SlotId(index)) {
