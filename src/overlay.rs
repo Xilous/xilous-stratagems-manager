@@ -72,6 +72,12 @@ impl OverlayModel {
         self.requested_count = 0;
     }
 
+    fn shows_fallback_booster(&self) -> bool {
+        self.presets
+            .iter()
+            .any(|preset| preset.fallback_booster.is_some())
+    }
+
     fn apply(&mut self, event: AppEvent) -> OverlayModelUpdate {
         let (policy, presets_changed) = match event {
             AppEvent::PresetListUpdated { presets } => {
@@ -111,6 +117,7 @@ impl OverlayModel {
                 if let Some(row) = self.presets.iter_mut().find(|row| row.name == preset) {
                     row.stratagems = stratagems;
                     row.booster = booster;
+                    row.fallback_booster = None;
                     row.status = OverlayPresetStatus::Ready;
                 }
                 self.active_preset = Some(preset);
@@ -135,6 +142,16 @@ impl OverlayModel {
                 self.tone = OverlayTone::Working;
                 (OverlayEventPolicy::Hold, false)
             }
+            AppEvent::FallbackBoosterRequested { preset } => {
+                self.active_preset = Some(preset);
+                self.status = "Saved Booster is already in use. Select another to save as your \
+                               fallback, or return to cancel."
+                    .to_string();
+                self.selected_count = 0;
+                self.requested_count = 0;
+                self.tone = OverlayTone::Warning;
+                (OverlayEventPolicy::Hold, false)
+            }
             AppEvent::ItemSelected => {
                 self.selected_count += 1;
                 let progress = if self.requested_count > 0 {
@@ -147,7 +164,7 @@ impl OverlayModel {
                 (OverlayEventPolicy::Hold, false)
             }
             AppEvent::PresetDone { preset, completion } => {
-                self.active_preset = Some(preset);
+                self.active_preset = Some(preset.clone());
                 match completion {
                     PresetCompletion::Complete => {
                         self.status = "Done".to_string();
@@ -156,6 +173,19 @@ impl OverlayModel {
                     }
                     PresetCompletion::BoosterUnavailable => {
                         self.status = "Booster already in use".to_string();
+                        self.tone = OverlayTone::Warning;
+                        (OverlayEventPolicy::HideAfter(ATTENTION_HIDE_DELAY), false)
+                    }
+                    PresetCompletion::FallbackBoosterSaved { path } => {
+                        if let Some(row) = self.presets.iter_mut().find(|row| row.name == preset) {
+                            row.fallback_booster = Some(path);
+                        }
+                        self.status = "Fallback Booster saved".to_string();
+                        self.tone = OverlayTone::Success;
+                        (OverlayEventPolicy::HideAfter(DONE_HIDE_DELAY), true)
+                    }
+                    PresetCompletion::FallbackBoosterNotSaved => {
+                        self.status = "Fallback Booster not saved".to_string();
                         self.tone = OverlayTone::Warning;
                         (OverlayEventPolicy::HideAfter(ATTENTION_HIDE_DELAY), false)
                     }

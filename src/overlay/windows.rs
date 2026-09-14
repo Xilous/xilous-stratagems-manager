@@ -10,14 +10,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use tracing::warn;
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     ANTIALIASED_QUALITY, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, CLIP_DEFAULT_PRECIS,
-    CreateFontW, DC_BRUSH, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_CALCRECT, DT_CENTER,
-    DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, DeleteObject,
-    DrawTextW, EndPaint, FW_NORMAL, FW_SEMIBOLD, FillRect, GetDC, GetStockObject, HBRUSH, HDC,
-    HFONT, InvalidateRect, OUT_DEFAULT_PRECIS, PAINTSTRUCT, ReleaseDC, SelectObject, SetBkMode,
-    SetDCBrushColor, SetDIBitsToDevice, SetTextColor, TRANSPARENT,
+    CreateFontW, DC_BRUSH, DC_PEN, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_CALCRECT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
+    DeleteObject, DrawTextW, EndPaint, FW_NORMAL, FW_SEMIBOLD, FillRect, GetDC, GetStockObject,
+    HBRUSH, HDC, HFONT, InvalidateRect, NULL_BRUSH, OUT_DEFAULT_PRECIS, PAINTSTRUCT, Polygon,
+    ReleaseDC, SelectObject, SetBkMode, SetDCBrushColor, SetDCPenColor, SetDIBitsToDevice,
+    SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -61,6 +62,9 @@ const BASE_KEY_W: i32 = 32;
 const BASE_KEY_H: i32 = 18;
 const BASE_KEY_ICON_GAP: i32 = 9;
 const BASE_LABEL_ICON_GAP: i32 = 8;
+const BASE_FALLBACK_SEPARATOR_W: i32 = 1;
+const BASE_FALLBACK_SEPARATOR_H: i32 = 18;
+const BASE_FALLBACK_SEPARATOR_GAP: i32 = 3;
 const BASE_ACCENT_W: i32 = 3;
 const MAX_PRESET_ICONS: i32 = 5;
 const HOLD_KEY_RELEASE_HIDE_DELAY: Duration = Duration::from_millis(120);
@@ -219,19 +223,34 @@ impl OverlayMetrics {
         Self::from_scale(scale, DEFAULT_OVERLAY_ROWS)
     }
 
-    fn with_preset_count(self, preset_count: usize) -> Self {
-        Self::from_scale_and_label_width(self.scale, overlay_row_count(preset_count), self.label_w)
+    fn with_preset_count(self, preset_count: usize, show_fallback: bool) -> Self {
+        Self::from_scale_and_label_width(
+            self.scale,
+            overlay_row_count(preset_count),
+            self.label_w,
+            show_fallback,
+        )
     }
 
     fn from_scale(scale: f32, preset_count: usize) -> Self {
-        Self::from_scale_and_label_width(scale, preset_count, 0)
+        Self::from_scale_and_label_width(scale, preset_count, 0, false)
     }
 
-    fn with_label_width(self, preset_count: usize, label_w: i32) -> Self {
-        Self::from_scale_and_label_width(self.scale, overlay_row_count(preset_count), label_w)
+    fn with_label_width(self, preset_count: usize, label_w: i32, show_fallback: bool) -> Self {
+        Self::from_scale_and_label_width(
+            self.scale,
+            overlay_row_count(preset_count),
+            label_w,
+            show_fallback,
+        )
     }
 
-    fn from_scale_and_label_width(scale: f32, preset_count: usize, label_w: i32) -> Self {
+    fn from_scale_and_label_width(
+        scale: f32,
+        preset_count: usize,
+        label_w: i32,
+        show_fallback: bool,
+    ) -> Self {
         let preset_count = overlay_row_count(preset_count) as i32;
         let padding = scaled_i32(BASE_PADDING, scale);
         let label_w = label_w.max(0);
@@ -240,7 +259,12 @@ impl OverlayMetrics {
         } else {
             0
         };
-        let window_w = scaled_i32(BASE_WINDOW_W, scale) + label_w + label_icon_gap;
+        let fallback_w = if show_fallback {
+            fallback_width(scale)
+        } else {
+            0
+        };
+        let window_w = scaled_i32(BASE_WINDOW_W, scale) + fallback_w + label_w + label_icon_gap;
         let title_y = scaled_i32(BASE_TITLE_Y, scale);
         let title_h = scaled_i32(BASE_TITLE_H, scale);
         let row_y = title_y + title_h + scaled_i32(BASE_TITLE_GAP, scale);
@@ -256,7 +280,7 @@ impl OverlayMetrics {
         let key_icon_gap = scaled_i32(BASE_KEY_ICON_GAP, scale);
         let icon_size = scaled_i32(BASE_ICON_SIZE, scale);
         let icon_gap = scaled_i32(BASE_ICON_GAP, scale);
-        let icons_w = MAX_PRESET_ICONS * icon_size + (MAX_PRESET_ICONS - 1) * icon_gap;
+        let icons_w = MAX_PRESET_ICONS * icon_size + (MAX_PRESET_ICONS - 1) * icon_gap + fallback_w;
         let content_w = key_w + key_icon_gap + icons_w;
         let content_w = content_w + label_w + label_icon_gap;
         let key_x = (window_w - content_w).max(0) / 2;
@@ -312,6 +336,12 @@ impl Default for OverlayMetrics {
 
 fn scaled_i32(value: i32, scale: f32) -> i32 {
     ((value as f32 * scale).round() as i32).max(1)
+}
+
+fn fallback_width(scale: f32) -> i32 {
+    scaled_i32(BASE_ICON_SIZE, scale)
+        + scaled_i32(BASE_FALLBACK_SEPARATOR_W, scale)
+        + 2 * scaled_i32(BASE_FALLBACK_SEPARATOR_GAP, scale)
 }
 
 fn centered_y(top: i32, outer_h: i32, inner_h: i32) -> i32 {
@@ -760,7 +790,13 @@ fn refresh_status_metrics(hwnd: HWND) -> Option<OverlayMetrics> {
             .map(|label| measure_text_line_width(hdc, overlay.renderer.fonts.body, label))
             .max()
             .unwrap_or(0);
-        let base_window_w = scaled_i32(BASE_WINDOW_W, metrics.scale);
+        let show_fallback = overlay.state.model.shows_fallback_booster();
+        let fallback_w = if show_fallback {
+            fallback_width(metrics.scale)
+        } else {
+            0
+        };
+        let base_window_w = scaled_i32(BASE_WINDOW_W, metrics.scale) + fallback_w;
         let label_icon_gap = scaled_i32(BASE_LABEL_ICON_GAP, metrics.scale);
         let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(base_window_w);
         let max_window_w = (screen_w - metrics.screen_margin * 2).max(base_window_w);
@@ -770,7 +806,8 @@ fn refresh_status_metrics(hwnd: HWND) -> Option<OverlayMetrics> {
         } else {
             0
         };
-        let metrics = metrics.with_label_width(overlay.state.model.presets.len(), label_w);
+        let metrics =
+            metrics.with_label_width(overlay.state.model.presets.len(), label_w, show_fallback);
         let text_w = (metrics.row_w - metrics.text_pad_x * 2).max(1);
         let text_h = measure_wrapped_text_height(
             hdc,
@@ -837,7 +874,10 @@ fn apply_event(event: AppEvent) -> Option<OverlayEventPolicy> {
 
         let update = state.model.apply(event);
         if update.presets_changed {
-            state.metrics = state.metrics.with_preset_count(state.model.presets.len());
+            state.metrics = state.metrics.with_preset_count(
+                state.model.presets.len(),
+                state.model.shows_fallback_booster(),
+            );
             state.icons.clear();
             warm_preset_icons(state);
         }
@@ -910,6 +950,7 @@ fn paint_overlay(hwnd: HWND) {
 fn draw_presets(hdc: HDC, state: &OverlayState, renderer: &OverlayRenderer) {
     unsafe {
         let visible_count = state.model.presets.len().min(MAX_OVERLAY_ROWS);
+        let show_fallback = state.model.shows_fallback_booster();
         for (index, preset) in state.model.presets.iter().take(visible_count).enumerate() {
             let metrics = state.metrics;
             let y = metrics.row_y + index as i32 * (metrics.row_h + metrics.row_gap);
@@ -957,6 +998,7 @@ fn draw_presets(hdc: HDC, state: &OverlayState, renderer: &OverlayRenderer) {
                         preset,
                         metrics.icon_x,
                         centered_y(y, metrics.row_h, metrics.icon_size as i32),
+                        show_fallback,
                     );
                 }
                 OverlayPresetStatus::NotSaved => {
@@ -1035,6 +1077,7 @@ fn draw_preset_icons(
     preset: &OverlayPreset,
     x: i32,
     y: i32,
+    show_fallback: bool,
 ) {
     let icon_size = state.metrics.icon_size as i32;
 
@@ -1043,9 +1086,79 @@ fn draw_preset_icons(
         draw_preset_icon(hdc, state, renderer, item_id, icon_x, y);
     }
 
+    let icon_x = x + 4 * (icon_size + state.metrics.icon_gap);
     if let Some(item_id) = preset.booster.as_ref() {
-        let icon_x = x + 4 * (icon_size + state.metrics.icon_gap);
         draw_preset_icon(hdc, state, renderer, item_id, icon_x, y);
+    } else {
+        draw_empty_booster_slot(hdc, icon_x, y, icon_size);
+    }
+
+    if show_fallback {
+        let separator_gap = scaled_i32(BASE_FALLBACK_SEPARATOR_GAP, state.metrics.scale);
+        let separator_w = scaled_i32(BASE_FALLBACK_SEPARATOR_W, state.metrics.scale);
+        let separator_h = scaled_i32(BASE_FALLBACK_SEPARATOR_H, state.metrics.scale);
+        let separator_x = icon_x + icon_size + separator_gap;
+        let separator_y = centered_y(y, icon_size, separator_h);
+        let separator = RECT {
+            left: separator_x,
+            top: separator_y,
+            right: separator_x + separator_w,
+            bottom: separator_y + separator_h,
+        };
+        renderer.fill_rect(hdc, &separator, rgb(80, 90, 100));
+        let fallback_x = separator_x + separator_w + separator_gap;
+        if let Some(fallback) = preset.fallback_booster.as_ref() {
+            draw_preset_icon(hdc, state, renderer, fallback, fallback_x, y);
+        } else {
+            draw_empty_booster_slot(hdc, fallback_x, y, icon_size);
+        }
+    }
+}
+
+fn draw_empty_booster_slot(hdc: HDC, x: i32, y: i32, size: i32) {
+    let scale = size as f32 / BASE_ICON_SIZE as f32;
+    let horizontal_inset = (2.0 * scale).round().max(1.0) as i32;
+    let vertical_inset = (4.0 * scale).round().max(1.0) as i32;
+    let stroke_width = (2.0 * scale).round().max(1.0) as i32;
+
+    unsafe {
+        let old_pen = SelectObject(hdc, GetStockObject(DC_PEN));
+        let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        SetDCPenColor(hdc, rgb(58, 66, 74));
+        for inset in 0..stroke_width {
+            let left = x + horizontal_inset + inset;
+            let top = y + vertical_inset + inset;
+            let right = x + size - horizontal_inset - inset - 1;
+            let bottom = y + size - vertical_inset - inset - 1;
+            let shoulder = (right - left + 2) / 4;
+            let middle = (top + bottom) / 2;
+            let points = [
+                POINT {
+                    x: left + shoulder,
+                    y: top,
+                },
+                POINT {
+                    x: right - shoulder,
+                    y: top,
+                },
+                POINT {
+                    x: right,
+                    y: middle,
+                },
+                POINT {
+                    x: right - shoulder,
+                    y: bottom,
+                },
+                POINT {
+                    x: left + shoulder,
+                    y: bottom,
+                },
+                POINT { x: left, y: middle },
+            ];
+            let _ = Polygon(hdc, &points);
+        }
+        let _ = SelectObject(hdc, old_brush);
+        let _ = SelectObject(hdc, old_pen);
     }
 }
 
@@ -1176,7 +1289,13 @@ fn warm_preset_icons(state: &mut OverlayState) {
         .model
         .presets
         .iter()
-        .flat_map(|preset| preset.stratagems.iter().chain(preset.booster.iter()))
+        .flat_map(|preset| {
+            preset
+                .stratagems
+                .iter()
+                .chain(preset.booster.iter())
+                .chain(preset.fallback_booster.iter())
+        })
         .cloned()
         .collect::<Vec<_>>();
 

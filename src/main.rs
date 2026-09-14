@@ -81,6 +81,7 @@ struct PresetsConfig {
     legacy_path: Option<PathBuf>,
     apply_in_saved_order: bool,
     auto_ready_up: bool,
+    auto_save_fallback_booster: bool,
     labels: BTreeMap<String, String>,
 }
 
@@ -172,6 +173,7 @@ fn run_preset_hotkey_mode(
     let tray = tray::spawn(tray::TraySettings {
         apply_in_saved_order: config.presets.apply_in_saved_order,
         auto_ready_up: config.presets.auto_ready_up,
+        auto_save_fallback_booster: config.presets.auto_save_fallback_booster,
     })?;
 
     for binding in &bindings {
@@ -199,12 +201,14 @@ fn run_preset_hotkey_mode(
         overlay = config.overlay.enabled,
         apply_in_saved_order = config.presets.apply_in_saved_order,
         auto_ready_up = config.presets.auto_ready_up,
+        auto_save_fallback_booster = config.presets.auto_save_fallback_booster,
         "application ready"
     );
     let mut action_config = PresetActionConfig {
         presets: presets_path,
         apply_in_saved_order: config.presets.apply_in_saved_order,
         auto_ready_up: config.presets.auto_ready_up,
+        auto_save_fallback_booster: config.presets.auto_save_fallback_booster,
         events: &events,
     };
     let mut capture_session = CaptureSessionManager::new();
@@ -306,6 +310,14 @@ fn handle_tray_events(
             tray::TrayEvent::ToggleAutoReadyUp => {
                 action_config.auto_ready_up = !action_config.auto_ready_up;
                 ("auto_ready_up", action_config.auto_ready_up)
+            }
+            tray::TrayEvent::ToggleAutoSaveFallbackBooster => {
+                action_config.auto_save_fallback_booster =
+                    !action_config.auto_save_fallback_booster;
+                (
+                    "auto_save_fallback_booster",
+                    action_config.auto_save_fallback_booster,
+                )
             }
             tray::TrayEvent::ExitRequested => {
                 info!("tray exit requested");
@@ -576,8 +588,8 @@ fn overlay_preset(
     labels: &BTreeMap<String, String>,
     status: OverlayPresetStatus,
 ) -> OverlayPreset {
-    let (stratagems, booster) = preset.map_or_else(
-        || (Vec::new(), None),
+    let (stratagems, booster, fallback_booster) = preset.map_or_else(
+        || (Vec::new(), None, None),
         |preset| {
             (
                 preset
@@ -587,6 +599,10 @@ fn overlay_preset(
                     .collect(),
                 preset
                     .booster
+                    .as_ref()
+                    .map(|template| template.path.clone()),
+                preset
+                    .fallback_booster
                     .as_ref()
                     .map(|template| template.path.clone()),
             )
@@ -602,6 +618,7 @@ fn overlay_preset(
             .map(str::to_owned),
         stratagems,
         booster,
+        fallback_booster,
         status,
     }
 }

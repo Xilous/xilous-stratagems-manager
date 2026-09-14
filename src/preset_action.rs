@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use tracing::{debug, info, info_span};
@@ -13,17 +13,20 @@ use crate::game_window::find_game_window;
 use crate::input;
 use crate::loadout::{
     BoosterApplyOutcome, UiState, apply_booster_from_home, apply_empty_loadout_preset,
-    bind_loadout_region, collect_current_preset, detect_ui_state, scan_loadout_home,
+    bind_loadout_region, collect_current_preset, collect_home_booster, detect_ui_state,
+    scan_loadout_home, wait_for_filled_home,
 };
 use crate::permissions;
 use crate::preset::{
     CapturedPreset, Preset, invalid_preset_reason, load_preset, save_captured_preset,
+    save_fallback_booster,
 };
 #[cfg(feature = "diagnostics")]
 use crate::vision::log_home_tone;
 use crate::vision::{RecognizerRuntime, RecognizerSession, RoiObservation};
 
 const READY_UP_HOLD_MS: u64 = 45;
+const FALLBACK_BOOSTER_SELECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresetActionOutcome {
@@ -57,6 +60,7 @@ pub struct PresetActionConfig<'a> {
     pub presets: &'a Path,
     pub apply_in_saved_order: bool,
     pub auto_ready_up: bool,
+    pub auto_save_fallback_booster: bool,
     pub events: &'a AppEventSink,
 }
 
@@ -137,6 +141,7 @@ pub fn handle_preset_hotkey(
             debug!(
                 stratagem_count = preset.stratagems.len(),
                 booster_present = preset.booster.is_some(),
+                fallback_booster_present = preset.fallback_booster.is_some(),
                 "applying preset from empty home"
             );
             log_preset_contents(&preset);
@@ -154,7 +159,20 @@ pub fn handle_preset_hotkey(
             let (ready_up_after_apply, completion) = match booster {
                 Some(BoosterApplyOutcome::Applied) => (true, PresetCompletion::Complete),
                 Some(BoosterApplyOutcome::Unavailable) => {
-                    (false, PresetCompletion::BoosterUnavailable)
+                    if config.auto_save_fallback_booster {
+                        if let Some(path) = learn_fallback_booster(
+                            recognizer,
+                            &mut automation,
+                            config,
+                            preset_name,
+                        )? {
+                            (true, PresetCompletion::FallbackBoosterSaved { path })
+                        } else {
+                            (false, PresetCompletion::FallbackBoosterNotSaved)
+                        }
+                    } else {
+                        (false, PresetCompletion::BoosterUnavailable)
+                    }
                 }
                 None => (false, PresetCompletion::Complete),
             };
@@ -248,8 +266,57 @@ fn log_preset_contents(preset: &Preset) {
             .booster
             .as_ref()
             .map_or("", |template| template.path.as_str()),
+        fallback_booster_present = preset.fallback_booster.is_some(),
+        fallback_booster_template = preset
+            .fallback_booster
+            .as_ref()
+            .map_or("", |template| template.path.as_str()),
         "preset contents"
     );
+}
+
+fn learn_fallback_booster(
+    recognizer: RecognizerSession,
+    automation: &mut AutomationSession<'_>,
+    config: &PresetActionConfig<'_>,
+    preset_name: &str,
+) -> Result<Option<String>> {
+    config.events.emit(AppEvent::FallbackBoosterRequested {
+        preset: preset_name.to_string(),
+    });
+    let Some(home) =
+        wait_for_filled_home(automation, recognizer, FALLBACK_BOOSTER_SELECTION_TIMEOUT)?
+    else {
+        info!(
+            preset = %preset_name,
+            timeout = ?FALLBACK_BOOSTER_SELECTION_TIMEOUT,
+            "fallback booster selection timed out"
+        );
+        return Ok(None);
+    };
+    let Some(sample) = collect_home_booster(&home, recognizer.ui_scale())? else {
+        info!(
+            preset = %preset_name,
+            "fallback booster selection cancelled without choosing a booster"
+        );
+        return Ok(None);
+    };
+
+    let preset = save_fallback_booster(config.presets, preset_name, &sample)
+        .with_context(|| format!("failed to save fallback booster for \"{preset_name}\""))?;
+    let path = preset
+        .fallback_booster
+        .as_ref()
+        .expect("saved preset must contain a fallback booster")
+        .path
+        .clone();
+    log_preset_contents(&preset);
+    info!(
+        preset = %preset_name,
+        presets_path = %config.presets.display(),
+        "fallback booster saved"
+    );
+    Ok(Some(path))
 }
 
 fn apply_booster_if_present(
@@ -269,6 +336,7 @@ fn apply_booster_if_present(
         &home,
         config.presets,
         booster,
+        preset.fallback_booster.as_ref(),
     )
     .map(Some)
     .context("failed to apply booster from home")

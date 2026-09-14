@@ -5,6 +5,9 @@ apply_in_saved_order = false
 # Press B after applying a preset with a booster.
 auto_ready_up = false
 
+# If a saved Booster is already in use, save a manually selected one as its fallback.
+auto_save_fallback_booster = false
+
 # Optional labels shown beside preset hotkeys in order.
 # Remove the leading # from the labels you want to use.
 [presets.labels]

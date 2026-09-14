@@ -25,6 +25,8 @@ pub struct Preset {
     pub stratagems: Vec<LocalTemplate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub booster: Option<LocalTemplate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_booster: Option<LocalTemplate>,
 }
 
 pub struct CapturedPreset {
@@ -33,7 +35,12 @@ pub struct CapturedPreset {
 }
 
 pub fn invalid_preset_reason(path: &Path, preset: &Preset) -> Option<String> {
-    for template in preset.stratagems.iter().chain(preset.booster.iter()) {
+    for template in preset
+        .stratagems
+        .iter()
+        .chain(preset.booster.iter())
+        .chain(preset.fallback_booster.iter())
+    {
         if !valid_sample_geometry(template.geometry) {
             return Some(format!("invalid sample geometry for {}", template.path));
         }
@@ -148,6 +155,7 @@ pub fn save_captured_preset(path: &Path, name: &str, captured: &CapturedPreset) 
     let mut preset = Preset {
         stratagems: Vec::with_capacity(4),
         booster: None,
+        fallback_booster: None,
     };
     for (index, sample) in captured.stratagems.iter().enumerate() {
         let relative = format!("{LOCAL_TEMPLATES_DIR}/{name}/stratagem-{}.png", index + 1);
@@ -184,7 +192,43 @@ pub fn save_captured_preset(path: &Path, name: &str, captured: &CapturedPreset) 
 
     let json = serde_json::to_string_pretty(&presets)?;
     std::fs::write(path, json).with_context(|| format!("failed to write {}", path.display()))?;
+    remove_template_image_if_exists(
+        path,
+        &format!("{LOCAL_TEMPLATES_DIR}/{name}/fallback-booster.png"),
+    )?;
+    if captured.booster.is_none() {
+        remove_template_image_if_exists(
+            path,
+            &format!("{LOCAL_TEMPLATES_DIR}/{name}/booster.png"),
+        )?;
+    }
     Ok(preset)
+}
+
+pub fn save_fallback_booster(path: &Path, name: &str, sample: &ImageSample) -> Result<Preset> {
+    validate_preset_name(name)?;
+    ensure!(
+        valid_sample_geometry(sample.geometry),
+        "preset {name} has invalid fallback booster-template geometry"
+    );
+
+    let mut presets = load_preset_file(path)?;
+    let preset = presets
+        .presets
+        .get_mut(name)
+        .with_context(|| format!("preset not found: {name}"))?;
+    let relative = format!("{LOCAL_TEMPLATES_DIR}/{name}/fallback-booster.png");
+    save_template_image(path, &relative, &sample.image)?;
+    preset.fallback_booster = Some(LocalTemplate {
+        path: relative,
+        geometry: sample.geometry,
+    });
+    validate_preset(name, preset)?;
+    let saved = preset.clone();
+
+    let json = serde_json::to_string_pretty(&presets)?;
+    std::fs::write(path, json).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(saved)
 }
 
 pub fn resolve_template_path(presets_path: &Path, relative: &str) -> Result<PathBuf> {
@@ -298,4 +342,14 @@ fn save_template_image(presets_path: &Path, relative: &str, image: &RgbaImage) -
     image
         .save(&destination)
         .with_context(|| format!("failed to save local template {}", destination.display()))
+}
+
+fn remove_template_image_if_exists(presets_path: &Path, relative: &str) -> Result<()> {
+    let destination = resolve_template_path(presets_path, relative)?;
+    match fs::remove_file(&destination) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to remove local template {}", destination.display())),
+    }
 }

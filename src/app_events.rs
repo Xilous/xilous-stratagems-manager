@@ -26,6 +26,7 @@ pub struct OverlayPreset {
     pub label: Option<String>,
     pub stratagems: Vec<String>,
     pub booster: Option<String>,
+    pub fallback_booster: Option<String>,
     pub status: OverlayPresetStatus,
 }
 
@@ -36,10 +37,12 @@ pub enum OverlayPresetStatus {
     Invalid(String),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum PresetCompletion {
     Complete,
     BoosterUnavailable,
+    FallbackBoosterSaved { path: String },
+    FallbackBoosterNotSaved,
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +71,9 @@ pub enum AppEvent {
     ListSelectionStarted {
         item_kind: ItemKind,
         requested_items: usize,
+    },
+    FallbackBoosterRequested {
+        preset: String,
     },
     ItemSelected,
     PresetDone {

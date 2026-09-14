@@ -111,6 +111,14 @@ pub fn scan_loadout_home(
     recognizer.detect(image, SlotLayout::Home)
 }
 
+pub fn wait_for_filled_home(
+    automation: &mut AutomationSession<'_>,
+    recognizer: RecognizerSession,
+    timeout: Duration,
+) -> Result<Option<RoiObservation>> {
+    wait_for_stable_ui_state(automation, recognizer, UiState::HomeFilled, timeout)
+}
+
 fn wait_for_stable_ui_state(
     automation: &mut AutomationSession<'_>,
     recognizer: RecognizerSession,
@@ -329,7 +337,7 @@ fn is_slot_list(result: &RoiObservation, item_kind: ItemKind) -> bool {
     }
 }
 
-fn collect_home_booster(
+pub fn collect_home_booster(
     result: &RoiObservation,
     template_scale: f32,
 ) -> Result<Option<crate::vision::ImageSample>> {

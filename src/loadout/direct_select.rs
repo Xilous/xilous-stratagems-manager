@@ -47,6 +47,12 @@ enum ListSelectionOutcome {
     Unavailable,
 }
 
+#[derive(Clone, Copy)]
+enum ListSelectionMode {
+    All { in_saved_order: bool },
+    FirstAvailable,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ScrollDirection {
     Up,
@@ -120,7 +126,9 @@ pub fn apply_empty_loadout_preset(
         events,
         &item_ids,
         opened_list,
-        apply_in_saved_order,
+        ListSelectionMode::All {
+            in_saved_order: apply_in_saved_order,
+        },
     )? {
         ListSelectionOutcome::Applied(home) => Ok(home),
         ListSelectionOutcome::Unavailable => {
@@ -136,23 +144,37 @@ pub fn apply_booster_from_home(
     home: &RoiObservation,
     presets_path: &Path,
     template: &LocalTemplate,
+    fallback: Option<&LocalTemplate>,
 ) -> Result<BoosterApplyOutcome> {
     let target = home_booster_target(home)?;
     let opened_list = open_slot_list(automation, recognizer, target)?;
-    let source = load_template_sample(presets_path, template)?;
+    let templates = std::iter::once(template)
+        .chain(fallback)
+        .collect::<Vec<_>>();
+    let sources = templates
+        .iter()
+        .map(|template| {
+            load_template_sample(presets_path, template)
+                .map(|sample| (template.path.clone(), sample))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let classifier = TemplateClassifier::new(
         ItemKind::Booster,
-        vec![(template.path.clone(), source)],
+        sources,
         recognizer.ui_scale(),
         &opened_list,
     )?;
+    let item_ids = templates
+        .iter()
+        .map(|template| template.path.clone())
+        .collect::<Vec<_>>();
     match select_items_from_open_list(
         PageNavigator::new(recognizer, ItemKind::Booster, classifier),
         automation,
         events,
-        std::slice::from_ref(&template.path),
+        &item_ids,
         opened_list,
-        true,
+        ListSelectionMode::FirstAvailable,
     )? {
         ListSelectionOutcome::Applied(_) => Ok(BoosterApplyOutcome::Applied),
         ListSelectionOutcome::Unavailable => Ok(BoosterApplyOutcome::Unavailable),
@@ -165,19 +187,27 @@ fn select_items_from_open_list(
     events: &AppEventSink,
     items: &[String],
     initial_observation: RoiObservation,
-    apply_in_saved_order: bool,
+    mode: ListSelectionMode,
 ) -> Result<ListSelectionOutcome> {
     let item_kind = navigator.item_kind();
+    let requested_items = match mode {
+        ListSelectionMode::All { .. } => items.len(),
+        ListSelectionMode::FirstAvailable => 1,
+    };
     let span = info_span!(
         "preset_list_selection",
         item_kind = %item_kind.label(),
-        requested_items = items.len(),
-        apply_in_saved_order
+        requested_items,
+        mode = match mode {
+            ListSelectionMode::All { in_saved_order: true } => "all_in_saved_order",
+            ListSelectionMode::All { in_saved_order: false } => "all_visible_first",
+            ListSelectionMode::FirstAvailable => "first_available",
+        }
     );
     let _guard = span.enter();
     events.emit(AppEvent::ListSelectionStarted {
         item_kind,
-        requested_items: items.len(),
+        requested_items,
     });
 
     let mut remaining = items.to_vec();
@@ -200,15 +230,12 @@ fn select_items_from_open_list(
             ?boundary_candidate
         );
         let _page_guard = page_span.enter();
-        let target = if apply_in_saved_order {
-            find_visible_target(&current_page.roi, &remaining[0], item_kind)
-                .filter(|target| list_map.can_select_slot(&target.slot))
-                .or_else(|| {
-                    list_map
-                        .visible_mapped_target(&remaining[0], &current_page.roi)
-                        .map(DirectClickTarget::from_fallback)
-                })
-        } else {
+        let target = if matches!(
+            mode,
+            ListSelectionMode::All {
+                in_saved_order: false
+            }
+        ) {
             next_visible_target(&current_page.roi, &remaining, item_kind, |slot| {
                 list_map.can_select_slot(slot)
             })
@@ -219,6 +246,14 @@ fn select_items_from_open_list(
                         .map(DirectClickTarget::from_fallback)
                 })
             })
+        } else {
+            find_visible_target(&current_page.roi, &remaining[0], item_kind)
+                .filter(|target| list_map.can_select_slot(&target.slot))
+                .or_else(|| {
+                    list_map
+                        .visible_mapped_target(&remaining[0], &current_page.roi)
+                        .map(DirectClickTarget::from_fallback)
+                })
         };
         if let Some(target) = target {
             if let ItemAvailability::Unavailable { brightness_ratio } = target.availability {
@@ -228,6 +263,16 @@ fn select_items_from_open_list(
                     brightness_ratio,
                     "booster target is already in use"
                 );
+                if matches!(mode, ListSelectionMode::FirstAvailable) && remaining.len() > 1 {
+                    remaining.remove(0);
+                    wheel_attempts = 0;
+                    boundary_candidate = None;
+                    debug!(
+                        next_item_id = %remaining[0],
+                        "trying the fallback booster"
+                    );
+                    continue;
+                }
                 return Ok(ListSelectionOutcome::Unavailable);
             }
             #[cfg(feature = "diagnostics")]
@@ -243,7 +288,8 @@ fn select_items_from_open_list(
             let _guard = span.enter();
             let selected_item_id = target.item_id.clone();
             let selected_slot = target.slot.clone();
-            let final_requested_item = remaining.len() == 1;
+            let final_requested_item =
+                matches!(mode, ListSelectionMode::FirstAvailable) || remaining.len() == 1;
             let outcome = select_preset_target(
                 automation,
                 &navigator,
@@ -277,7 +323,9 @@ fn select_items_from_open_list(
                         remaining_items = remaining.len(),
                         "final item selection confirmed after returning home"
                     );
-                    debug_assert!(remaining.is_empty());
+                    debug_assert!(
+                        matches!(mode, ListSelectionMode::FirstAvailable) || remaining.is_empty()
+                    );
                     return Ok(ListSelectionOutcome::Applied(home));
                 }
             }
