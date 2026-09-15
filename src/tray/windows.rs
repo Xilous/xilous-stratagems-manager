@@ -75,21 +75,21 @@ fn run_tray(
         None,
     );
     let auto_ready_id = auto_ready_item.id().clone();
-    let auto_save_fallback_item = CheckMenuItem::with_id(
-        "auto_save_fallback_booster",
-        "Auto-save Booster fallback",
+    let save_fallback_when_taken_item = CheckMenuItem::with_id(
+        "save_fallback_when_taken",
+        "Save fallback for taken Booster",
         true,
-        settings.auto_save_fallback_booster,
+        settings.save_fallback_when_taken,
         None,
     );
-    let auto_save_fallback_id = auto_save_fallback_item.id().clone();
+    let save_fallback_when_taken_id = save_fallback_when_taken_item.id().clone();
     let separator = PredefinedMenuItem::separator();
     let close_item = MenuItem::with_id("close", "Exit", true, None);
     let close_id = close_item.id().clone();
     let menu = Menu::with_items(&[
         &apply_order_item,
         &auto_ready_item,
-        &auto_save_fallback_item,
+        &save_fallback_when_taken_item,
         &separator,
         &close_item,
     ])
@@ -108,8 +108,8 @@ fn run_tray(
             TrayEvent::ToggleApplyInSavedOrder
         } else if event.id == auto_ready_id {
             TrayEvent::ToggleAutoReadyUp
-        } else if event.id == auto_save_fallback_id {
-            TrayEvent::ToggleAutoSaveFallbackBooster
+        } else if event.id == save_fallback_when_taken_id {
+            TrayEvent::ToggleSaveFallbackWhenTaken
         } else if event.id == close_id {
             TrayEvent::ExitRequested
         } else {

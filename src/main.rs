@@ -81,7 +81,7 @@ struct PresetsConfig {
     legacy_path: Option<PathBuf>,
     apply_in_saved_order: bool,
     auto_ready_up: bool,
-    auto_save_fallback_booster: bool,
+    save_fallback_when_taken: bool,
     labels: BTreeMap<String, String>,
 }
 
@@ -173,7 +173,7 @@ fn run_preset_hotkey_mode(
     let tray = tray::spawn(tray::TraySettings {
         apply_in_saved_order: config.presets.apply_in_saved_order,
         auto_ready_up: config.presets.auto_ready_up,
-        auto_save_fallback_booster: config.presets.auto_save_fallback_booster,
+        save_fallback_when_taken: config.presets.save_fallback_when_taken,
     })?;
 
     for binding in &bindings {
@@ -201,14 +201,14 @@ fn run_preset_hotkey_mode(
         overlay = config.overlay.enabled,
         apply_in_saved_order = config.presets.apply_in_saved_order,
         auto_ready_up = config.presets.auto_ready_up,
-        auto_save_fallback_booster = config.presets.auto_save_fallback_booster,
+        save_fallback_when_taken = config.presets.save_fallback_when_taken,
         "application ready"
     );
     let mut action_config = PresetActionConfig {
         presets: presets_path,
         apply_in_saved_order: config.presets.apply_in_saved_order,
         auto_ready_up: config.presets.auto_ready_up,
-        auto_save_fallback_booster: config.presets.auto_save_fallback_booster,
+        save_fallback_when_taken: config.presets.save_fallback_when_taken,
         events: &events,
     };
     let mut capture_session = CaptureSessionManager::new();
@@ -216,6 +216,7 @@ fn run_preset_hotkey_mode(
     let mut prewarm_suppressed = false;
 
     loop {
+        registered_hotkeys.discard_pending();
         let hotkey_id = loop {
             let hotkey_poll = registered_hotkeys.wait_timeout(HOTKEY_WAIT_POLL_INTERVAL)?;
             if handle_tray_events(&tray, &mut action_config, config_path) {
@@ -311,12 +312,11 @@ fn handle_tray_events(
                 action_config.auto_ready_up = !action_config.auto_ready_up;
                 ("auto_ready_up", action_config.auto_ready_up)
             }
-            tray::TrayEvent::ToggleAutoSaveFallbackBooster => {
-                action_config.auto_save_fallback_booster =
-                    !action_config.auto_save_fallback_booster;
+            tray::TrayEvent::ToggleSaveFallbackWhenTaken => {
+                action_config.save_fallback_when_taken = !action_config.save_fallback_when_taken;
                 (
-                    "auto_save_fallback_booster",
-                    action_config.auto_save_fallback_booster,
+                    "save_fallback_when_taken",
+                    action_config.save_fallback_when_taken,
                 )
             }
             tray::TrayEvent::ExitRequested => {

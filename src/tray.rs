@@ -23,13 +23,13 @@ impl TrayHandle {
 pub struct TraySettings {
     pub apply_in_saved_order: bool,
     pub auto_ready_up: bool,
-    pub auto_save_fallback_booster: bool,
+    pub save_fallback_when_taken: bool,
 }
 
 pub enum TrayEvent {
     ToggleApplyInSavedOrder,
     ToggleAutoReadyUp,
-    ToggleAutoSaveFallbackBooster,
+    ToggleSaveFallbackWhenTaken,
     ExitRequested,
 }
 

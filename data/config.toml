@@ -6,7 +6,7 @@ apply_in_saved_order = false
 auto_ready_up = false
 
 # If a saved Booster is already in use, save a manually selected one as its fallback.
-auto_save_fallback_booster = false
+save_fallback_when_taken = false
 
 # Optional labels shown beside preset hotkeys in order.
 # Remove the leading # from the labels you want to use.

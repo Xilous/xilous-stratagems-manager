@@ -60,7 +60,7 @@ pub struct PresetActionConfig<'a> {
     pub presets: &'a Path,
     pub apply_in_saved_order: bool,
     pub auto_ready_up: bool,
-    pub auto_save_fallback_booster: bool,
+    pub save_fallback_when_taken: bool,
     pub events: &'a AppEventSink,
 }
 
@@ -159,7 +159,7 @@ pub fn handle_preset_hotkey(
             let (ready_up_after_apply, completion) = match booster {
                 Some(BoosterApplyOutcome::Applied) => (true, PresetCompletion::Complete),
                 Some(BoosterApplyOutcome::Unavailable) => {
-                    if config.auto_save_fallback_booster {
+                    if config.save_fallback_when_taken {
                         if let Some(path) = learn_fallback_booster(
                             recognizer,
                             &mut automation,

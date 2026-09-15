@@ -521,6 +521,10 @@ impl RegisteredHotkeys {
         wait_for_any_hotkey_message_timeout(&self.hotkeys, timeout)
     }
 
+    pub fn discard_pending(&self) {
+        while take_pending_hotkey().is_some() {}
+    }
+
     pub fn wait_released(&self, hotkey_id: i32, timeout: Duration) -> bool {
         let Some(hotkey) = self.hotkeys.iter().find(|hotkey| hotkey.id == hotkey_id) else {
             return false;
@@ -546,15 +550,9 @@ fn wait_for_any_hotkey_message_timeout(
     timeout: Duration,
 ) -> Result<HotkeyPoll> {
     let start = Instant::now();
-    let mut msg = MSG::default();
 
     loop {
-        while unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
-            if msg.message != WM_HOTKEY {
-                continue;
-            }
-
-            let hotkey_id = msg.wParam.0 as i32;
+        while let Some(hotkey_id) = take_pending_hotkey() {
             if hotkeys.iter().any(|hotkey| hotkey.id == hotkey_id) {
                 return Ok(HotkeyPoll::Triggered(hotkey_id));
             }
@@ -567,6 +565,15 @@ fn wait_for_any_hotkey_message_timeout(
 
         let remaining = timeout.saturating_sub(elapsed);
         sleep(remaining.min(Duration::from_millis(20)));
+    }
+}
+
+fn take_pending_hotkey() -> Option<i32> {
+    let mut message = MSG::default();
+    unsafe {
+        PeekMessageW(&mut message, None, WM_HOTKEY, WM_HOTKEY, PM_REMOVE)
+            .as_bool()
+            .then_some(message.wParam.0 as i32)
     }
 }
 
