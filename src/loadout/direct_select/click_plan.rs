@@ -76,9 +76,9 @@ fn compare_center_then_x(
     left: &DirectClickTarget,
     right: &DirectClickTarget,
 ) -> std::cmp::Ordering {
-    let left_center_y = left.slot.y as f32 + left.slot.h as f32 * 0.5;
-    let right_center_y = right.slot.y as f32 + right.slot.h as f32 * 0.5;
-    left_center_y
-        .total_cmp(&right_center_y)
-        .then_with(|| left.slot.x.cmp(&right.slot.x))
+    let (left_x, left_y) = left.slot.center_f32();
+    let (right_x, right_y) = right.slot.center_f32();
+    left_y
+        .total_cmp(&right_y)
+        .then_with(|| left_x.total_cmp(&right_x))
 }

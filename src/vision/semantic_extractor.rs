@@ -189,9 +189,10 @@ pub(crate) fn slot_core_rect(slot: &Slot) -> ImageRect {
     let height = (slot.h as f32 * SAMPLE_CORE_FRACTION)
         .round_ties_even()
         .max(1.0) as u32;
+    let (center_x, center_y) = slot.center_f32();
     ImageRect {
-        x: slot.x + (slot.w - width) / 2,
-        y: slot.y + (slot.h - height) / 2,
+        x: (center_x - width as f32 * 0.5).round_ties_even().max(0.0) as u32,
+        y: (center_y - height as f32 * 0.5).round_ties_even().max(0.0) as u32,
         w: width,
         h: height,
     }
