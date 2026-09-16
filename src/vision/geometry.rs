@@ -80,6 +80,7 @@ struct SamplingParams {
     step: i32,
     reference_distance: i32,
     reference_half_width: i32,
+    aa_radius: i32,
 }
 
 impl SamplingParams {
@@ -92,6 +93,7 @@ impl SamplingParams {
             step: round_ties_even(4.0 * sampling_scale).max(1),
             reference_distance: round_ties_even(6.0 * sampling_scale).max(edge_envelope + 2),
             reference_half_width: round_ties_even(0.75 * sampling_scale).max(0),
+            aa_radius: round_ties_even(AA_RADIUS as f64 * sampling_scale).max(1),
         }
     }
 }
@@ -838,6 +840,43 @@ fn refine_row_aa(
     columns: [f64; 4],
     params: SamplingParams,
 ) -> Option<f64> {
+    let raw_y = estimate_row_aa(image, nominal_y, supported, columns, params)?;
+    let residual = raw_y - nominal_y;
+    if residual.abs() <= AA_MAX_RESIDUAL {
+        debug!(
+            nominal_y,
+            residual,
+            reanchored = false,
+            "AA row phase refined"
+        );
+        return Some(raw_y);
+    }
+
+    let reanchored_y = nominal_y + residual.signum();
+    let verified_y = estimate_row_aa(image, reanchored_y, supported, columns, params)?;
+    let verified_residual = verified_y - reanchored_y;
+    if verified_residual.abs() > AA_MAX_RESIDUAL
+        || round_ties_even(verified_y) != round_ties_even(raw_y)
+    {
+        return None;
+    }
+
+    debug!(
+        nominal_y,
+        residual = verified_y - nominal_y,
+        reanchored = true,
+        "AA row phase refined"
+    );
+    Some(verified_y)
+}
+
+fn estimate_row_aa(
+    image: &RgbaImage,
+    nominal_y: f64,
+    supported: &[bool; 4],
+    columns: [f64; 4],
+    params: SamplingParams,
+) -> Option<f64> {
     let mut residuals = Vec::new();
     for (col, &supported) in supported.iter().enumerate() {
         if !supported {
@@ -861,15 +900,6 @@ fn refine_row_aa(
     }
     residuals.sort_unstable_by(f64::total_cmp);
     let residual = median_sorted_f64(&residuals);
-    if residual.abs() > AA_MAX_RESIDUAL {
-        return None;
-    }
-    debug!(
-        nominal_y,
-        residual,
-        samples = residuals.len(),
-        "AA row phase refined"
-    );
     Some(nominal_y + residual)
 }
 
@@ -879,9 +909,10 @@ fn aa_horizontal_residual(
     tangents: &[i32],
     params: SamplingParams,
 ) -> Option<f64> {
-    const PROFILE_LEN: usize = (2 * AA_RADIUS + 1) as usize;
+    let profile_len = (2 * params.aa_radius + 1) as usize;
     let anchor = round_ties_even(boundary);
-    let mut tangent_profiles = Vec::<[f32; PROFILE_LEN]>::new();
+    let mut tangent_profiles = Vec::with_capacity(tangents.len() * profile_len);
+    let mut differences = Vec::with_capacity(profile_len);
     for &x in tangents {
         let outer = mean_linear_rgb_vertical(
             image,
@@ -897,55 +928,54 @@ fn aa_horizontal_residual(
         )?;
         let background: [f32; 3] =
             std::array::from_fn(|channel| 0.5 * (outer[channel] + inner[channel]));
-        let mut differences = [[0.0; 3]; PROFILE_LEN];
+        differences.clear();
         let mut direction = [0.0; 3];
         let mut direction_energy = 0.0;
-        for (index, offset) in (-AA_RADIUS..=AA_RADIUS).enumerate() {
+        for offset in -params.aa_radius..=params.aa_radius {
             let color = linear_rgb_at(image, x, anchor + offset)?;
-            differences[index] =
-                std::array::from_fn(|channel| color[channel] - background[channel]);
-            let energy = differences[index]
-                .iter()
-                .map(|value| value * value)
-                .sum::<f32>();
+            let difference = std::array::from_fn(|channel| color[channel] - background[channel]);
+            let energy = difference.iter().map(|value| value * value).sum::<f32>();
             if energy > direction_energy {
                 direction_energy = energy;
-                direction = differences[index];
+                direction = difference;
             }
+            differences.push(difference);
         }
         if direction_energy <= f32::EPSILON {
             continue;
         }
-        let mut profile = [0.0; PROFILE_LEN];
-        for (value, difference) in profile.iter_mut().zip(differences) {
-            *value = (difference
-                .into_iter()
+        tangent_profiles.extend(differences.iter().map(|difference| {
+            (difference
+                .iter()
                 .zip(direction)
                 .map(|(left, right)| left * right)
                 .sum::<f32>()
                 / direction_energy)
-                .clamp(0.0, 1.0);
-        }
-        tangent_profiles.push(profile);
+                .clamp(0.0, 1.0)
+        }));
     }
     if tangent_profiles.is_empty() {
         return None;
     }
 
-    let mut profile = [0.0; PROFILE_LEN];
-    let mut values = Vec::with_capacity(tangent_profiles.len());
+    let mut profile = vec![0.0; profile_len];
+    let mut values = Vec::with_capacity(tangent_profiles.len() / profile_len);
     for (index, output) in profile.iter_mut().enumerate() {
         values.clear();
-        values.extend(tangent_profiles.iter().map(|profile| profile[index]));
+        values.extend(
+            tangent_profiles
+                .chunks_exact(profile_len)
+                .map(|profile| profile[index]),
+        );
         values.sort_unstable_by(f32::total_cmp);
         *output = median_sorted_f32(&values);
     }
-    let floor = profile.into_iter().fold(f32::INFINITY, f32::min);
+    let floor = profile.iter().copied().fold(f32::INFINITY, f32::min);
     let mut total = 0.0f64;
     let mut moment = 0.0f64;
     for (index, value) in profile.into_iter().enumerate() {
         let value = (value - floor).max(0.0) as f64;
-        let offset = index as i32 - AA_RADIUS;
+        let offset = index as i32 - params.aa_radius;
         total += value;
         moment += offset as f64 * value;
     }
