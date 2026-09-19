@@ -24,7 +24,7 @@ pub struct AppConfig {
     pub window: WindowConfig,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PresetsConfig {
     #[serde(rename = "path")]
@@ -33,6 +33,19 @@ pub struct PresetsConfig {
     pub auto_ready_up: bool,
     pub save_fallback_when_taken: bool,
     pub labels: BTreeMap<String, String>,
+}
+
+impl Default for PresetsConfig {
+    fn default() -> Self {
+        Self {
+            legacy_path: None,
+            // Slot order must match the saved preset so slot hotkeys stay predictable.
+            apply_in_saved_order: true,
+            auto_ready_up: false,
+            save_fallback_when_taken: false,
+            labels: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]

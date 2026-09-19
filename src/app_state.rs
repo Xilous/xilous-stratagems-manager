@@ -82,7 +82,7 @@ pub struct LiveSettings {
 impl Default for LiveSettings {
     fn default() -> Self {
         Self {
-            apply_in_saved_order: false,
+            apply_in_saved_order: true,
             auto_ready_up: false,
             save_fallback_when_taken: false,
             labels: BTreeMap::new(),

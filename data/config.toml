@@ -1,6 +1,7 @@
 [presets]
-# Apply Stratagems in the order they were saved.
-apply_in_saved_order = false
+# Apply Stratagems in the order they were saved, so slot 1-4 hotkeys match the preset.
+# Turning this off picks whatever is visible first (slightly faster, order may differ).
+apply_in_saved_order = true
 
 # Press B after applying a preset with a booster.
 auto_ready_up = false

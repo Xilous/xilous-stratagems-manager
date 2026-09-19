@@ -195,7 +195,7 @@ impl App {
                         let selected = current == Some(entry.id.as_str());
                         if ui
                             .selectable_label(selected, &entry.name)
-                            .on_hover_text(entry_details(entry))
+                            .on_hover_text(RichText::new(entry_details(entry)).monospace())
                             .clicked()
                         {
                             changed = Some(Some(entry.id.clone()));
@@ -519,7 +519,7 @@ impl App {
                 let settings = &snapshot.settings;
                 ui.label(
                     RichText::new(
-                        "Set these to match Options → Mouse & Keyboard in Helldivers 2. Arrow keys for directions are strongly recommended so movement keys never corrupt a code.",
+                        "Set these to match Options > Mouse & Keyboard in Helldivers 2. Arrow keys for directions are strongly recommended so movement keys never corrupt a code.",
                     )
                     .small()
                     .color(Color32::from_gray(170)),
@@ -554,9 +554,12 @@ impl App {
                         ui.end_row();
 
                         for direction in DIRECTIONS {
-                            ui.label(format!("Direction {}", direction.arrow()));
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Direction {}", direction_word(direction)));
+                                ui.label(RichText::new(direction.arrow().to_string()).monospace());
+                            });
                             let mut key = draft.direction_key(direction);
-                            if key_picker(ui, &format!("direction-{}", direction.arrow()), &mut key) {
+                            if key_picker(ui, &format!("direction-{}", direction_word(direction)), &mut key) {
                                 draft.set_direction_key(direction, key);
                             }
                             ui.end_row();
@@ -644,7 +647,7 @@ impl App {
                             ui.horizontal(|ui| {
                                 self.show_icon(ui, Some(&entry.id), ICON_ROW);
                                 ui.label(&entry.name)
-                                    .on_hover_text(entry_details(entry));
+                                    .on_hover_text(RichText::new(entry_details(entry)).monospace());
                             });
                             ui.label(RichText::new(entry.arrows()).monospace());
                             ui.horizontal(|ui| {
@@ -689,7 +692,13 @@ impl App {
                         .color(Color32::from_gray(160)),
                 );
                 let mut apply_in_saved_order = settings.apply_in_saved_order;
-                if ui.checkbox(&mut apply_in_saved_order, "Apply stratagems in saved order").changed() {
+                if ui
+                    .checkbox(
+                        &mut apply_in_saved_order,
+                        "Apply stratagems in saved order (keeps slots 1-4 as saved; off is slightly faster)",
+                    )
+                    .changed()
+                {
                     self.handle.send(UiCommand::SetPresetFlag {
                         key: "apply_in_saved_order",
                         value: apply_in_saved_order,
@@ -878,6 +887,15 @@ fn tone_color(tone: Tone) -> Color32 {
         Tone::Success => Color32::from_rgb(90, 200, 120),
         Tone::Warning => Color32::from_rgb(240, 160, 70),
         Tone::Error => Color32::from_rgb(235, 90, 90),
+    }
+}
+
+fn direction_word(direction: crate::catalog::Direction) -> &'static str {
+    match direction {
+        crate::catalog::Direction::Up => "Up",
+        crate::catalog::Direction::Down => "Down",
+        crate::catalog::Direction::Left => "Left",
+        crate::catalog::Direction::Right => "Right",
     }
 }
 
