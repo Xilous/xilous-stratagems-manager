@@ -490,12 +490,13 @@ impl Engine {
                         "menu_mode",
                         &enum_config_name(&input_settings.menu_mode),
                     );
-                    config::set_string(
-                        document,
-                        "mission",
-                        "direction_keys",
-                        &enum_config_name(&input_settings.direction_keys),
-                    );
+                    if let Some(mission) = document["mission"].as_table_like_mut() {
+                        mission.remove("direction_keys");
+                    }
+                    config::set_string(document, "mission", "direction_up", input_settings.direction_up.config_name());
+                    config::set_string(document, "mission", "direction_down", input_settings.direction_down.config_name());
+                    config::set_string(document, "mission", "direction_left", input_settings.direction_left.config_name());
+                    config::set_string(document, "mission", "direction_right", input_settings.direction_right.config_name());
                     config::set_integer(
                         document,
                         "mission",

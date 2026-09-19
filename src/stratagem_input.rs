@@ -63,14 +63,24 @@ impl DirectionKeys {
     }
 }
 
+pub const DIRECTIONS: [Direction; 4] = [
+    Direction::Up,
+    Direction::Down,
+    Direction::Left,
+    Direction::Right,
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StratagemInputSettings {
     /// Key bound to "Stratagem menu" in Helldivers 2.
     pub menu_key: Key,
     pub menu_mode: MenuMode,
-    /// Which keys Helldivers 2 reads as Stratagem directions.
-    pub direction_keys: DirectionKeys,
+    /// Keys bound to the four Stratagem directions in Helldivers 2.
+    pub direction_up: Key,
+    pub direction_down: Key,
+    pub direction_left: Key,
+    pub direction_right: Key,
     /// Wait after opening the menu before the first direction.
     pub menu_open_delay_ms: u64,
     /// How long each direction key is held.
@@ -86,7 +96,10 @@ impl Default for StratagemInputSettings {
         Self {
             menu_key: Key::LCtrl,
             menu_mode: MenuMode::Hold,
-            direction_keys: DirectionKeys::Arrows,
+            direction_up: Key::Up,
+            direction_down: Key::Down,
+            direction_left: Key::Left,
+            direction_right: Key::Right,
             menu_open_delay_ms: 60,
             key_hold_ms: 40,
             key_gap_ms: 40,
@@ -96,6 +109,37 @@ impl Default for StratagemInputSettings {
 }
 
 impl StratagemInputSettings {
+    pub const fn direction_key(&self, direction: Direction) -> Key {
+        match direction {
+            Direction::Up => self.direction_up,
+            Direction::Down => self.direction_down,
+            Direction::Left => self.direction_left,
+            Direction::Right => self.direction_right,
+        }
+    }
+
+    pub fn set_direction_key(&mut self, direction: Direction, key: Key) {
+        match direction {
+            Direction::Up => self.direction_up = key,
+            Direction::Down => self.direction_down = key,
+            Direction::Left => self.direction_left = key,
+            Direction::Right => self.direction_right = key,
+        }
+    }
+
+    /// Applies one of the common layouts to all four direction keys.
+    pub fn apply_layout(&mut self, layout: DirectionKeys) {
+        for direction in DIRECTIONS {
+            self.set_direction_key(direction, layout.key(direction));
+        }
+    }
+
+    pub fn matches_layout(&self, layout: DirectionKeys) -> bool {
+        DIRECTIONS
+            .iter()
+            .all(|direction| self.direction_key(*direction) == layout.key(*direction))
+    }
+
     pub fn validate(&self) -> Result<()> {
         for (name, value) in [
             ("menu_open_delay_ms", self.menu_open_delay_ms),
@@ -112,15 +156,14 @@ impl StratagemInputSettings {
             self.key_hold_ms > 0,
             "mission.key_hold_ms must be greater than zero"
         );
-        let direction_keys = [
-            Direction::Up,
-            Direction::Down,
-            Direction::Left,
-            Direction::Right,
-        ]
-        .map(|direction| self.direction_keys.key(direction));
+        let direction_keys = DIRECTIONS.map(|direction| self.direction_key(direction));
         if direction_keys.contains(&self.menu_key) {
-            bail!("mission.menu_key cannot also be a direction key");
+            bail!("the Stratagem menu key cannot also be a direction key");
+        }
+        for (index, key) in direction_keys.iter().enumerate() {
+            if direction_keys[..index].contains(key) {
+                bail!("{} is used for more than one direction", key.name());
+            }
         }
         Ok(())
     }
@@ -156,7 +199,7 @@ pub fn execute(
     sleep(Duration::from_millis(settings.menu_open_delay_ms));
 
     for (index, direction) in code.iter().enumerate() {
-        session.tap_key(settings.direction_keys.key(*direction), settings.key_hold_ms)?;
+        session.tap_key(settings.direction_key(*direction), settings.key_hold_ms)?;
         if index + 1 < code.len() {
             sleep(Duration::from_millis(settings.key_gap_ms));
         }
@@ -180,17 +223,32 @@ mod tests {
 
     #[test]
     fn menu_key_cannot_be_direction() {
-        let settings = StratagemInputSettings {
+        let mut settings = StratagemInputSettings {
             menu_key: Key::W,
-            direction_keys: DirectionKeys::Wasd,
+            ..Default::default()
+        };
+        settings.apply_layout(DirectionKeys::Wasd);
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn directions_must_be_distinct() {
+        let settings = StratagemInputSettings {
+            direction_left: Key::Up,
             ..Default::default()
         };
         assert!(settings.validate().is_err());
     }
 
     #[test]
-    fn wasd_mapping() {
-        assert_eq!(DirectionKeys::Wasd.key(Direction::Left), Key::A);
-        assert_eq!(DirectionKeys::Arrows.key(Direction::Down), Key::Down);
+    fn layouts_and_custom_keys() {
+        let mut settings = StratagemInputSettings::default();
+        assert!(settings.matches_layout(DirectionKeys::Arrows));
+        settings.apply_layout(DirectionKeys::Wasd);
+        assert_eq!(settings.direction_key(Direction::Left), Key::A);
+        settings.set_direction_key(Direction::Up, Key::Numpad8);
+        assert!(!settings.matches_layout(DirectionKeys::Wasd));
+        settings.menu_key = Key::Home;
+        settings.validate().expect("custom layout is valid");
     }
 }

@@ -31,15 +31,18 @@ enabled = true
 # A key may include modifiers, e.g. "alt+f1".
 slot_keys = ["f1", "f2", "f3", "f4"]
 
-# Key bound to "Stratagem Menu" in the game.
+# Key bound to "Stratagem Menu" in the game. Editable in the window.
 menu_key = "lctrl"
 
 # hold: the menu stays open while the key is held (game default). press: the key toggles it.
 menu_mode = "hold"
 
-# Keys the game reads as Stratagem directions: arrows or wasd.
+# Keys bound to the Stratagem directions in the game. Editable in the window.
 # Arrow keys are strongly recommended so movement keys never corrupt a code.
-direction_keys = "arrows"
+direction_up = "up"
+direction_down = "down"
+direction_left = "left"
+direction_right = "right"
 
 # Timing in milliseconds.
 menu_open_delay_ms = 60

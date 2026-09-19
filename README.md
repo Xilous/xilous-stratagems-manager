@@ -94,7 +94,7 @@ The script queries the wiki database, writes `data/stratagems.json` and the icon
 
 - **A preset key does nothing.** Check that the window shows *Helldivers 2: focused* and *Hotkeys: armed*, that the loadout home screen is open with all four Stratagem slots filled or empty, and that no other application uses the same shortcut.
 - **`F1`–`F4` do nothing in a mission.** There must be an active loadout (see the window) and mission hotkeys must be enabled in Settings.
-- **The code is entered wrong or partially.** Set the game to arrow-key Stratagem input, then raise the hold and gap times in Settings.
+- **The code is entered wrong or partially.** Check the menu key and the four direction keys under *Game keybinds* in the window match the game, prefer arrow keys, then raise the hold and gap times.
 - **A slot shows “not identified”.** Pick the Stratagem from the dropdown. If it happens often at your resolution, include `data/app.log` and `data/local_templates/` in a bug report.
 
 For bug reports, include `data/app.log`, the resolution and display mode, Windows scaling and HDR status, and a screenshot of the affected screen.

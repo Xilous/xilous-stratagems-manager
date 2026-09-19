@@ -58,7 +58,12 @@ pub struct MissionConfig {
     pub slot_keys: Vec<HotkeyBinding>,
     pub menu_key: input::Key,
     pub menu_mode: crate::stratagem_input::MenuMode,
-    pub direction_keys: crate::stratagem_input::DirectionKeys,
+    /// Older layout selector; the explicit direction keys below win when set.
+    pub direction_keys: Option<crate::stratagem_input::DirectionKeys>,
+    pub direction_up: Option<input::Key>,
+    pub direction_down: Option<input::Key>,
+    pub direction_left: Option<input::Key>,
+    pub direction_right: Option<input::Key>,
     pub menu_open_delay_ms: u64,
     pub key_hold_ms: u64,
     pub key_gap_ms: u64,
@@ -80,7 +85,11 @@ impl Default for MissionConfig {
             ],
             menu_key: input.menu_key,
             menu_mode: input.menu_mode,
-            direction_keys: input.direction_keys,
+            direction_keys: None,
+            direction_up: Some(input.direction_up),
+            direction_down: Some(input.direction_down),
+            direction_left: Some(input.direction_left),
+            direction_right: Some(input.direction_right),
             menu_open_delay_ms: input.menu_open_delay_ms,
             key_hold_ms: input.key_hold_ms,
             key_gap_ms: input.key_gap_ms,
@@ -92,15 +101,29 @@ impl Default for MissionConfig {
 
 impl MissionConfig {
     pub fn stratagem_input(&self) -> StratagemInputSettings {
-        StratagemInputSettings {
+        let mut settings = StratagemInputSettings {
             menu_key: self.menu_key,
             menu_mode: self.menu_mode,
-            direction_keys: self.direction_keys,
             menu_open_delay_ms: self.menu_open_delay_ms,
             key_hold_ms: self.key_hold_ms,
             key_gap_ms: self.key_gap_ms,
             menu_release_delay_ms: self.menu_release_delay_ms,
+            ..StratagemInputSettings::default()
+        };
+        if let Some(layout) = self.direction_keys {
+            settings.apply_layout(layout);
         }
+        for (direction, key) in [
+            (crate::catalog::Direction::Up, self.direction_up),
+            (crate::catalog::Direction::Down, self.direction_down),
+            (crate::catalog::Direction::Left, self.direction_left),
+            (crate::catalog::Direction::Right, self.direction_right),
+        ] {
+            if let Some(key) = key {
+                settings.set_direction_key(direction, key);
+            }
+        }
+        settings
     }
 }
 

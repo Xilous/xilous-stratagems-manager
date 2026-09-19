@@ -12,7 +12,7 @@ use crate::app_state::{AppHandle, HotkeyStatus, LiveSettings, PresetSummary, Sta
 use crate::catalog::{Catalog, StratagemEntry};
 use crate::input::{HotkeyBinding, HotkeyModifier, HotkeyModifiers, Key};
 use crate::item::StratagemCategory;
-use crate::stratagem_input::{DirectionKeys, MenuMode, StratagemInputSettings};
+use crate::stratagem_input::{DIRECTIONS, DirectionKeys, MenuMode, StratagemInputSettings};
 
 const APP_ICON_ICO: &[u8] = include_bytes!("../assets/app-icon.ico");
 const ICON_ROW: u32 = 26;
@@ -510,6 +510,117 @@ impl App {
         }
     }
 
+    /// The keys the game expects for the Stratagem menu and directions, plus
+    /// input timing. Edits are staged in a draft until Apply.
+    fn keybinds_section(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        egui::CollapsingHeader::new(RichText::new("Game keybinds").heading())
+            .default_open(true)
+            .show(ui, |ui| {
+                let settings = &snapshot.settings;
+                ui.label(
+                    RichText::new(
+                        "Set these to match Options → Mouse & Keyboard in Helldivers 2. Arrow keys for directions are strongly recommended so movement keys never corrupt a code.",
+                    )
+                    .small()
+                    .color(Color32::from_gray(170)),
+                );
+                let mut draft = self
+                    .input_draft
+                    .clone()
+                    .unwrap_or_else(|| settings.stratagem_input.clone());
+                let mut revert = false;
+                let draft = &mut draft;
+
+                egui::Grid::new("keybinds")
+                    .num_columns(2)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label("Stratagem menu");
+                        ui.horizontal(|ui| {
+                            key_picker(ui, "menu-key", &mut draft.menu_key);
+                            egui::ComboBox::from_id_salt("menu-mode")
+                                .selected_text(draft.menu_mode.label())
+                                .show_ui(ui, |ui| {
+                                    for mode in MenuMode::ALL {
+                                        ui.selectable_value(&mut draft.menu_mode, mode, mode.label());
+                                    }
+                                });
+                            ui.label(
+                                RichText::new("hold = menu open while held; press = key toggles it")
+                                    .small()
+                                    .color(Color32::from_gray(150)),
+                            );
+                        });
+                        ui.end_row();
+
+                        for direction in DIRECTIONS {
+                            ui.label(format!("Direction {}", direction.arrow()));
+                            let mut key = draft.direction_key(direction);
+                            if key_picker(ui, &format!("direction-{}", direction.arrow()), &mut key) {
+                                draft.set_direction_key(direction, key);
+                            }
+                            ui.end_row();
+                        }
+
+                        ui.label("Layout");
+                        ui.horizontal(|ui| {
+                            for layout in DirectionKeys::ALL {
+                                if ui
+                                    .selectable_label(draft.matches_layout(layout), layout.label())
+                                    .clicked()
+                                {
+                                    draft.apply_layout(layout);
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    });
+
+                ui.add_space(4.0);
+                ui.add(egui::Slider::new(&mut draft.menu_open_delay_ms, 0..=400).suffix(" ms").text("Wait after opening the menu"));
+                ui.add(egui::Slider::new(&mut draft.key_hold_ms, 10..=200).suffix(" ms").text("Hold each direction key"));
+                ui.add(egui::Slider::new(&mut draft.key_gap_ms, 0..=300).suffix(" ms").text("Gap between directions"));
+                ui.add(egui::Slider::new(&mut draft.menu_release_delay_ms, 0..=400).suffix(" ms").text("Wait before releasing the menu key"));
+
+                let dirty = *draft != settings.stratagem_input;
+                let problem = draft.validate().err().map(|error| format!("{error:#}"));
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(dirty && problem.is_none(), egui::Button::new("Apply"))
+                        .clicked()
+                    {
+                        self.handle.send(UiCommand::SetStratagemInput(draft.clone()));
+                    }
+                    if ui.add_enabled(dirty, egui::Button::new("Revert")).clicked() {
+                        revert = true;
+                    }
+                    if let Some(problem) = &problem {
+                        ui.colored_label(tone_color(Tone::Error), problem);
+                    } else if dirty {
+                        ui.label(
+                            RichText::new("Unsaved changes")
+                                .small()
+                                .color(tone_color(Tone::Warning)),
+                        );
+                    } else {
+                        ui.label(
+                            RichText::new(format!(
+                                "A 5-arrow code takes about {} ms.",
+                                settings.stratagem_input.estimated_duration(5).as_millis()
+                            ))
+                            .small()
+                            .color(Color32::from_gray(160)),
+                        );
+                    }
+                });
+                self.input_draft = if revert || !dirty {
+                    None
+                } else {
+                    Some(draft.clone())
+                };
+            });
+    }
+
     fn mission_section(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
         egui::CollapsingHeader::new(RichText::new("Mission stratagems").heading())
             .default_open(true)
@@ -628,74 +739,6 @@ impl App {
                 }
 
                 ui.add_space(8.0);
-                ui.label(RichText::new("Stratagem input").strong());
-                ui.label(
-                    RichText::new("Must match the Helldivers 2 keybinds. Arrow keys for stratagem directions are strongly recommended.")
-                        .small()
-                        .color(Color32::from_gray(160)),
-                );
-                let mut draft = self
-                    .input_draft
-                    .clone()
-                    .unwrap_or_else(|| settings.stratagem_input.clone());
-                let mut revert = false;
-                let draft = &mut draft;
-                ui.horizontal(|ui| {
-                    ui.label("Stratagem menu key");
-                    egui::ComboBox::from_id_salt("menu-key")
-                        .selected_text(draft.menu_key.name())
-                        .show_ui(ui, |ui| {
-                            for key in Key::ALL {
-                                ui.selectable_value(&mut draft.menu_key, key, key.name());
-                            }
-                        });
-                    ui.label("Menu mode");
-                    egui::ComboBox::from_id_salt("menu-mode")
-                        .selected_text(draft.menu_mode.label())
-                        .show_ui(ui, |ui| {
-                            for mode in MenuMode::ALL {
-                                ui.selectable_value(&mut draft.menu_mode, mode, mode.label());
-                            }
-                        });
-                    ui.label("Direction keys");
-                    egui::ComboBox::from_id_salt("direction-keys")
-                        .selected_text(draft.direction_keys.label())
-                        .show_ui(ui, |ui| {
-                            for keys in DirectionKeys::ALL {
-                                ui.selectable_value(&mut draft.direction_keys, keys, keys.label());
-                            }
-                        });
-                });
-                ui.add(egui::Slider::new(&mut draft.menu_open_delay_ms, 0..=400).suffix(" ms").text("Wait after opening the menu"));
-                ui.add(egui::Slider::new(&mut draft.key_hold_ms, 10..=200).suffix(" ms").text("Hold each direction key"));
-                ui.add(egui::Slider::new(&mut draft.key_gap_ms, 0..=300).suffix(" ms").text("Gap between directions"));
-                ui.add(egui::Slider::new(&mut draft.menu_release_delay_ms, 0..=400).suffix(" ms").text("Wait before releasing the menu key"));
-                let dirty = *draft != settings.stratagem_input;
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(dirty, egui::Button::new("Apply")).clicked() {
-                        self.handle.send(UiCommand::SetStratagemInput(draft.clone()));
-                    }
-                    if ui.add_enabled(dirty, egui::Button::new("Revert")).clicked() {
-                        revert = true;
-                    }
-                    if !dirty {
-                        ui.label(
-                            RichText::new(format!(
-                                "A 5-arrow code takes about {} ms.",
-                                settings.stratagem_input.estimated_duration(5).as_millis()
-                            ))
-                            .small()
-                            .color(Color32::from_gray(160)),
-                        );
-                    }
-                });
-                self.input_draft = if revert || !dirty {
-                    None
-                } else {
-                    Some(draft.clone())
-                };
-
-                ui.add_space(8.0);
                 ui.label(RichText::new("Catalog").strong());
                 ui.label(
                     RichText::new(format!(
@@ -795,6 +838,8 @@ impl eframe::App for App {
                     ui.add_space(6.0);
                     self.active_section(ui, &snapshot);
                     ui.add_space(12.0);
+                    self.keybinds_section(ui, &snapshot);
+                    ui.add_space(12.0);
                     self.mission_section(ui, &snapshot);
                     ui.add_space(12.0);
                     self.settings_section(ui, &snapshot);
@@ -802,6 +847,20 @@ impl eframe::App for App {
                 });
         });
     }
+}
+
+/// Dropdown over every key the tool can send. Returns whether it changed.
+fn key_picker(ui: &mut egui::Ui, salt: &str, key: &mut Key) -> bool {
+    let before = *key;
+    egui::ComboBox::from_id_salt(salt)
+        .selected_text(key.name())
+        .width(110.0)
+        .show_ui(ui, |ui| {
+            for candidate in Key::ALL {
+                ui.selectable_value(key, candidate, candidate.name());
+            }
+        });
+    *key != before
 }
 
 fn chip(ui: &mut egui::Ui, name: &str, value: &str, color: Color32) -> egui::Response {
