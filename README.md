@@ -109,6 +109,14 @@ cargo build --release
 
 The executable is written to `target\release\XilousStratagemsManager.exe`.
 
+To install the build as an application for the current user (Start Menu shortcut, data kept under the install folder), run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/install.ps1 -Launch
+```
+
+Add `-Desktop` for a desktop shortcut and `-Startup` to start it at sign-in. Re-run after every rebuild; existing presets and settings are preserved. `-MigrateFrom target\release\data` carries data over from a copy that was run from the build folder.
+
 ## Legal
 
 This is an unofficial third-party utility and is not affiliated with or endorsed by Arrowhead Game Studios or Sony Interactive Entertainment.
