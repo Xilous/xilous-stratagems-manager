@@ -89,6 +89,7 @@ impl App {
         options: WindowOptions,
     ) -> Self {
         creation.egui_ctx.set_visuals(egui::Visuals::dark());
+        install_symbol_font(&creation.egui_ctx);
         creation.egui_ctx.all_styles_mut(|style| {
             style.spacing.item_spacing = Vec2::new(8.0, 6.0);
             style.spacing.button_padding = Vec2::new(8.0, 4.0);
@@ -856,6 +857,29 @@ impl eframe::App for App {
                 });
         });
     }
+}
+
+/// The bundled fonts have no arrow glyphs; fall back to a Windows font that does.
+fn install_symbol_font(ctx: &egui::Context) {
+    let Some(bytes) = ["seguisym.ttf", "segoeui.ttf"]
+        .iter()
+        .find_map(|file| std::fs::read(format!(r"C:\Windows\Fonts\{file}")).ok())
+    else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "windows-symbol".to_owned(),
+        Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("windows-symbol".to_owned());
+    }
+    ctx.set_fonts(fonts);
 }
 
 /// Dropdown over every key the tool can send. Returns whether it changed.
