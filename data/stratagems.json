@@ -1,0 +1,1880 @@
+{
+    "source":  "https://helldivers.wiki.gg/wiki/Stratagems",
+    "synced_at":  "2026-09-19T02:48:44Z",
+    "stratagems":  [
+                       {
+                           "id":  "40-k-meltagun",
+                           "name":  "40-K Meltagun",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "left",
+                                        "left",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Meltagun Stratagem Icon Background.svg",
+                           "icon":  "40-k-meltagun.svg"
+                       },
+                       {
+                           "id":  "a-ac-8-autocannon-sentry",
+                           "name":  "A/AC-8 Autocannon Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "up",
+                                        "left",
+                                        "up"
+                                    ],
+                           "cooldown":  "150s",
+                           "wiki_image":  "Autocannon Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-ac-8-autocannon-sentry.svg"
+                       },
+                       {
+                           "id":  "a-arc-3-tesla-tower",
+                           "name":  "A/ARC-3 Tesla Tower",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "up",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "120s",
+                           "wiki_image":  "Tesla Tower Stratagem Icon Background.svg",
+                           "icon":  "a-arc-3-tesla-tower.svg"
+                       },
+                       {
+                           "id":  "a-flam-40-flame-sentry",
+                           "name":  "A/FLAM-40 Flame Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "100s",
+                           "wiki_image":  "Flame Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-flam-40-flame-sentry.svg"
+                       },
+                       {
+                           "id":  "a-g-16-gatling-sentry",
+                           "name":  "A/G-16 Gatling Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "left"
+                                    ],
+                           "cooldown":  "150s",
+                           "wiki_image":  "Gatling Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-g-16-gatling-sentry.svg"
+                       },
+                       {
+                           "id":  "a-gm-17-gas-mortar-sentry",
+                           "name":  "A/GM-17 Gas Mortar Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "left"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "Gas Mortar Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-gm-17-gas-mortar-sentry.svg"
+                       },
+                       {
+                           "id":  "a-las-98-laser-sentry",
+                           "name":  "A/LAS-98 Laser Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "150s",
+                           "wiki_image":  "Laser Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-las-98-laser-sentry.svg"
+                       },
+                       {
+                           "id":  "a-m-12-mortar-sentry",
+                           "name":  "A/M-12 Mortar Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "right",
+                                        "down"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "Mortar Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-m-12-mortar-sentry.svg"
+                       },
+                       {
+                           "id":  "a-m-23-ems-mortar-sentry",
+                           "name":  "A/M-23 EMS Mortar Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "right"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "EMS Mortar Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-m-23-ems-mortar-sentry.svg"
+                       },
+                       {
+                           "id":  "a-mg-43-machine-gun-sentry",
+                           "name":  "A/MG-43 Machine Gun Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "right",
+                                        "up"
+                                    ],
+                           "cooldown":  "90s",
+                           "wiki_image":  "Machine Gun Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-mg-43-machine-gun-sentry.svg"
+                       },
+                       {
+                           "id":  "a-mls-4x-rocket-sentry",
+                           "name":  "A/MLS-4X Rocket Sentry",
+                           "permit":  "Defensive",
+                           "type":  "Sentry",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "right",
+                                        "left"
+                                    ],
+                           "cooldown":  "150s",
+                           "wiki_image":  "Rocket Sentry Stratagem Icon Background.svg",
+                           "icon":  "a-mls-4x-rocket-sentry.svg"
+                       },
+                       {
+                           "id":  "ac-8-autocannon",
+                           "name":  "AC-8 Autocannon",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Autocannon Stratagem Icon Background.svg",
+                           "icon":  "ac-8-autocannon.svg"
+                       },
+                       {
+                           "id":  "activate-e-711-extraction-drill",
+                           "name":  "Activate E-711 Extraction Drill",
+                           "permit":  "Supply",
+                           "type":  "Objective",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "left",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Drill Stratagem Icon Background.svg",
+                           "icon":  "activate-e-711-extraction-drill.svg"
+                       },
+                       {
+                           "id":  "apw-1-anti-materiel-rifle",
+                           "name":  "APW-1 Anti-Materiel Rifle",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "up",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Anti-Materiel Rifle Stratagem Icon Background.svg",
+                           "icon":  "apw-1-anti-materiel-rifle.svg"
+                       },
+                       {
+                           "id":  "aquifer-drill",
+                           "name":  "Aquifer Drill",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "left",
+                                        "left",
+                                        "left",
+                                        "up",
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Drill Stratagem Icon Background.svg",
+                           "icon":  "aquifer-drill.svg"
+                       },
+                       {
+                           "id":  "arc-3-arc-thrower",
+                           "name":  "ARC-3 Arc Thrower",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "left"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Arc Thrower Stratagem Icon Background.svg",
+                           "icon":  "arc-3-arc-thrower.svg"
+                       },
+                       {
+                           "id":  "ax-ar-23-guard-dog",
+                           "name":  "AX/AR-23 Guard Dog",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "up",
+                                        "right",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Guard Dog Stratagem Icon Background.svg",
+                           "icon":  "ax-ar-23-guard-dog.svg"
+                       },
+                       {
+                           "id":  "ax-arc-3-k-9",
+                           "name":  "AX/ARC-3 K-9",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "up",
+                                        "right",
+                                        "left"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "K-9 Stratagem Icon Background.svg",
+                           "icon":  "ax-arc-3-k-9.svg"
+                       },
+                       {
+                           "id":  "ax-flam-75-hot-dog",
+                           "name":  "AX/FLAM-75 Hot Dog",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "up",
+                                        "left",
+                                        "left"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Hot Dog Stratagem Icon Background.svg",
+                           "icon":  "ax-flam-75-hot-dog.svg"
+                       },
+                       {
+                           "id":  "ax-las-5-rover",
+                           "name":  "AX/LAS-5 Rover",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "up",
+                                        "right",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Rover Stratagem Icon Background.svg",
+                           "icon":  "ax-las-5-rover.svg"
+                       },
+                       {
+                           "id":  "ax-tx-13-dog-breath",
+                           "name":  "AX/TX-13 Dog Breath",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "up",
+                                        "right",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Dog Breath Stratagem Icon Background.svg",
+                           "icon":  "ax-tx-13-dog-breath.svg"
+                       },
+                       {
+                           "id":  "b-flam-80-cremator",
+                           "name":  "B/FLAM-80 Cremator",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Cremator Stratagem Icon Background.svg",
+                           "icon":  "b-flam-80-cremator.svg"
+                       },
+                       {
+                           "id":  "b-md-c4-pack",
+                           "name":  "B/MD C4 Pack",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "right",
+                                        "up",
+                                        "up",
+                                        "right",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "C4 Pack Stratagem Icon Background.svg",
+                           "icon":  "b-md-c4-pack.svg"
+                       },
+                       {
+                           "id":  "b-1-supply-pack",
+                           "name":  "B-1 Supply Pack",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "up",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Supply Pack Stratagem Icon Background.svg",
+                           "icon":  "b-1-supply-pack.svg"
+                       },
+                       {
+                           "id":  "b-100-portable-hellbomb",
+                           "name":  "B-100 Portable Hellbomb",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "right",
+                                        "up",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "300s",
+                           "wiki_image":  "Portable Hellbomb Stratagem Icon Background.svg",
+                           "icon":  "b-100-portable-hellbomb.svg"
+                       },
+                       {
+                           "id":  "call-in-super-destroyer",
+                           "name":  "Call In Super Destroyer",
+                           "permit":  "",
+                           "type":  "Ship",
+                           "code":  [
+                                        "up",
+                                        "up",
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "N/A",
+                           "wiki_image":  "Call In Super Destroyer Stratagem Icon Background.svg",
+                           "icon":  "call-in-super-destroyer.svg"
+                       },
+                       {
+                           "id":  "cargo-container",
+                           "name":  "Cargo Container",
+                           "permit":  "",
+                           "type":  "",
+                           "code":  [
+                                        "up",
+                                        "up",
+                                        "down",
+                                        "down",
+                                        "right",
+                                        "down"
+                                    ],
+                           "cooldown":  "",
+                           "wiki_image":  "Cargo Container Stratagem Icon Background.svg",
+                           "icon":  "cargo-container.svg"
+                       },
+                       {
+                           "id":  "cqc-1-one-true-flag",
+                           "name":  "CQC-1 One True Flag",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "right",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "One True Flag Stratagem Icon Background.svg",
+                           "icon":  "cqc-1-one-true-flag.svg"
+                       },
+                       {
+                           "id":  "cqc-20-breaching-hammer",
+                           "name":  "CQC-20 Breaching Hammer",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "left",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Breaching Hammer Stratagem Icon Background.svg",
+                           "icon":  "cqc-20-breaching-hammer.svg"
+                       },
+                       {
+                           "id":  "cqc-9-defoliation-tool",
+                           "name":  "CQC-9 Defoliation Tool",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "right",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Defoliation Tool Stratagem Icon Background.svg",
+                           "icon":  "cqc-9-defoliation-tool.svg"
+                       },
+                       {
+                           "id":  "dark-fluid-vessel",
+                           "name":  "Dark Fluid Vessel",
+                           "permit":  "Supply",
+                           "type":  "Objective",
+                           "code":  [
+                                        "up",
+                                        "left",
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "30s",
+                           "wiki_image":  "Dark_Fluid_Vessel Stratagem Icon Background.svg",
+                           "icon":  "dark-fluid-vessel.svg"
+                       },
+                       {
+                           "id":  "e-at-12-anti-tank-emplacement",
+                           "name":  "E/AT-12 Anti-Tank Emplacement",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "right",
+                                        "right",
+                                        "right"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "Anti-Tank Emplacement Stratagem Icon Background.svg",
+                           "icon":  "e-at-12-anti-tank-emplacement.svg"
+                       },
+                       {
+                           "id":  "e-gl-21-grenadier-battlement",
+                           "name":  "E/GL-21 Grenadier Battlement",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "120s",
+                           "wiki_image":  "Grenadier Battlement Stratagem Icon Background.svg",
+                           "icon":  "e-gl-21-grenadier-battlement.svg"
+                       },
+                       {
+                           "id":  "e-mg-101-hmg-emplacement",
+                           "name":  "E/MG-101 HMG Emplacement",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "right",
+                                        "right",
+                                        "left"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "HMG Emplacement Stratagem Icon Background.svg",
+                           "icon":  "e-mg-101-hmg-emplacement.svg"
+                       },
+                       {
+                           "id":  "eagle-110mm-rocket-pods",
+                           "name":  "Eagle 110mm Rocket Pods",
+                           "permit":  "Offensive",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "up",
+                                        "left"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle 110mm Rocket Pods Stratagem Icon Background.svg",
+                           "icon":  "eagle-110mm-rocket-pods.svg"
+                       },
+                       {
+                           "id":  "eagle-500kg-bomb",
+                           "name":  "Eagle 500kg Bomb",
+                           "permit":  "Offense",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle 500kg Bomb Stratagem Icon Background.svg",
+                           "icon":  "eagle-500kg-bomb.svg"
+                       },
+                       {
+                           "id":  "eagle-airstrike",
+                           "name":  "Eagle Airstrike",
+                           "permit":  "Offensive",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "right"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle Airstrike Stratagem Icon Background.svg",
+                           "icon":  "eagle-airstrike.svg"
+                       },
+                       {
+                           "id":  "eagle-cluster-bomb",
+                           "name":  "Eagle Cluster Bomb",
+                           "permit":  "Offensive",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "down",
+                                        "right"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle Cluster Bomb Stratagem Icon Background.svg",
+                           "icon":  "eagle-cluster-bomb.svg"
+                       },
+                       {
+                           "id":  "eagle-gas-airstrike",
+                           "name":  "Eagle Gas Airstrike",
+                           "permit":  "Offensive",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle Gas Airstrike Stratagem Icon Background.svg",
+                           "icon":  "eagle-gas-airstrike.svg"
+                       },
+                       {
+                           "id":  "eagle-napalm-airstrike",
+                           "name":  "Eagle Napalm Airstrike",
+                           "permit":  "Offensive",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle Napalm Airstrike Stratagem Icon Background.svg",
+                           "icon":  "eagle-napalm-airstrike.svg"
+                       },
+                       {
+                           "id":  "eagle-rearm",
+                           "name":  "Eagle Rearm",
+                           "permit":  "",
+                           "type":  "Ship",
+                           "code":  [
+                                        "up",
+                                        "up",
+                                        "left",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Eagle Rearm Stratagem Icon Background.svg",
+                           "icon":  "eagle-rearm.svg"
+                       },
+                       {
+                           "id":  "eagle-smoke-strike",
+                           "name":  "Eagle Smoke Strike",
+                           "permit":  "Offensive",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "up",
+                                        "down"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle Smoke Strike Stratagem Icon Background.svg",
+                           "icon":  "eagle-smoke-strike.svg"
+                       },
+                       {
+                           "id":  "eagle-strafing-run",
+                           "name":  "Eagle Strafing Run",
+                           "permit":  "Offensive",
+                           "type":  "Eagle",
+                           "code":  [
+                                        "up",
+                                        "right",
+                                        "right"
+                                    ],
+                           "cooldown":  "15s",
+                           "wiki_image":  "Eagle Strafing Run Stratagem Icon Background.svg",
+                           "icon":  "eagle-strafing-run.svg"
+                       },
+                       {
+                           "id":  "eat-17-expendable-anti-tank",
+                           "name":  "EAT-17 Expendable Anti-Tank",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "70s",
+                           "wiki_image":  "Expendable Anti-Tank Stratagem Icon Background.svg",
+                           "icon":  "eat-17-expendable-anti-tank.svg"
+                       },
+                       {
+                           "id":  "eat-411-leveller",
+                           "name":  "EAT-411 Leveller",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "down"
+                                    ],
+                           "cooldown":  "140s",
+                           "wiki_image":  "Leveller Stratagem Icon Background.svg",
+                           "icon":  "eat-411-leveller.svg"
+                       },
+                       {
+                           "id":  "eat-700-expendable-napalm",
+                           "name":  "EAT-700 Expendable Napalm",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "left"
+                                    ],
+                           "cooldown":  "140s",
+                           "wiki_image":  "Expendable Napalm Stratagem Icon Background.svg",
+                           "icon":  "eat-700-expendable-napalm.svg"
+                       },
+                       {
+                           "id":  "exo-45-patriot-exosuit",
+                           "name":  "EXO-45 Patriot Exosuit",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "up",
+                                        "left",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "420s",
+                           "wiki_image":  "Patriot Exosuit Stratagem Icon Background.svg",
+                           "icon":  "exo-45-patriot-exosuit.svg"
+                       },
+                       {
+                           "id":  "exo-49-emancipator-exosuit",
+                           "name":  "EXO-49 Emancipator Exosuit",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "up",
+                                        "left",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "420s",
+                           "wiki_image":  "Emancipator Exosuit Stratagem Icon Background.svg",
+                           "icon":  "exo-49-emancipator-exosuit.svg"
+                       },
+                       {
+                           "id":  "exo-51-lumberer-exosuit",
+                           "name":  "EXO-51 Lumberer Exosuit",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "up",
+                                        "right",
+                                        "left",
+                                        "up"
+                                    ],
+                           "cooldown":  "420s",
+                           "wiki_image":  "Lumberer Exosuit Stratagem Icon Background.svg",
+                           "icon":  "exo-51-lumberer-exosuit.svg"
+                       },
+                       {
+                           "id":  "exo-55-breakthrough-exosuit",
+                           "name":  "EXO-55 Breakthrough Exosuit",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "left",
+                                        "right",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "420s",
+                           "wiki_image":  "Breakthrough Exosuit Stratagem Icon Background.svg",
+                           "icon":  "exo-55-breakthrough-exosuit.svg"
+                       },
+                       {
+                           "id":  "faf-14-spear",
+                           "name":  "FAF-14 Spear",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "up",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Spear Stratagem Icon Background.svg",
+                           "icon":  "faf-14-spear.svg"
+                       },
+                       {
+                           "id":  "flam-40-flamethrower",
+                           "name":  "FLAM-40 Flamethrower",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Flamethrower Stratagem Icon Background.svg",
+                           "icon":  "flam-40-flamethrower.svg"
+                       },
+                       {
+                           "id":  "fx-12-shield-generator-relay",
+                           "name":  "FX-12 Shield Generator Relay",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "90s",
+                           "wiki_image":  "Shield Generator Relay Stratagem Icon Background.svg",
+                           "icon":  "fx-12-shield-generator-relay.svg"
+                       },
+                       {
+                           "id":  "gl-21-grenade-launcher",
+                           "name":  "GL-21 Grenade Launcher",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "left",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Grenade Launcher Stratagem Icon Background.svg",
+                           "icon":  "gl-21-grenade-launcher.svg"
+                       },
+                       {
+                           "id":  "gl-28-belt-fed-grenade-launcher",
+                           "name":  "GL-28 Belt-Fed Grenade Launcher",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "left",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Belt-Fed Grenade Launcher Stratagem Icon Background.svg",
+                           "icon":  "gl-28-belt-fed-grenade-launcher.svg"
+                       },
+                       {
+                           "id":  "gl-52-de-escalator",
+                           "name":  "GL-52 De-Escalator",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "right",
+                                        "up",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "De-Escalator Stratagem Icon Background.svg",
+                           "icon":  "gl-52-de-escalator.svg"
+                       },
+                       {
+                           "id":  "gr-8-recoilless-rifle",
+                           "name":  "GR-8 Recoilless Rifle",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "right",
+                                        "left"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Recoilless Rifle Stratagem Icon Background.svg",
+                           "icon":  "gr-8-recoilless-rifle.svg"
+                       },
+                       {
+                           "id":  "hellbomb",
+                           "name":  "Hellbomb",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "30s",
+                           "wiki_image":  "Hellbomb Stratagem Icon Background.svg",
+                           "icon":  "hellbomb.svg"
+                       },
+                       {
+                           "id":  "hive-breaker-drill",
+                           "name":  "Hive Breaker Drill",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "left",
+                                        "up",
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Drill Stratagem Icon Background.svg",
+                           "icon":  "hive-breaker-drill.svg"
+                       },
+                       {
+                           "id":  "hover-pack",
+                           "name":  "Hover Pack",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "up",
+                                        "down",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Hover Pack Stratagem Icon Background.svg",
+                           "icon":  "hover-pack.svg"
+                       },
+                       {
+                           "id":  "las-98-laser-cannon",
+                           "name":  "LAS-98 Laser Cannon",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "left"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Laser Cannon Stratagem Icon Background.svg",
+                           "icon":  "las-98-laser-cannon.svg"
+                       },
+                       {
+                           "id":  "las-99-quasar-cannon",
+                           "name":  "LAS-99 Quasar Cannon",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Quasar Cannon Stratagem Icon Background.svg",
+                           "icon":  "las-99-quasar-cannon.svg"
+                       },
+                       {
+                           "id":  "lift-182-warp-pack",
+                           "name":  "LIFT-182 Warp Pack",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "down",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Warp Pack Stratagem Icon Background.svg",
+                           "icon":  "lift-182-warp-pack.svg"
+                       },
+                       {
+                           "id":  "lift-850-jump-pack",
+                           "name":  "LIFT-850 Jump Pack",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "up",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Jump Pack Stratagem Icon Background.svg",
+                           "icon":  "lift-850-jump-pack.svg"
+                       },
+                       {
+                           "id":  "link-hellpods-to-destroyer",
+                           "name":  "Link Hellpods to Destroyer",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "left",
+                                        "right",
+                                        "up",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "N/A",
+                           "wiki_image":  "Upload Data Stratagem Icon Background.svg",
+                           "icon":  "link-hellpods-to-destroyer.svg"
+                       },
+                       {
+                           "id":  "m-1000-maxigun",
+                           "name":  "M-1000 Maxigun",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Maxigun Stratagem Icon Background.svg",
+                           "icon":  "m-1000-maxigun.svg"
+                       },
+                       {
+                           "id":  "m-102-gunner-frv",
+                           "name":  "M-102 Gunner FRV",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Fast Recon Vehicle Stratagem Icon Background.svg",
+                           "icon":  "m-102-gunner-frv.svg"
+                       },
+                       {
+                           "id":  "m-103-supply-frv",
+                           "name":  "M-103 Supply FRV",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "left",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Supply FRV Stratagem Icon Background.svg",
+                           "icon":  "m-103-supply-frv.svg"
+                       },
+                       {
+                           "id":  "m-104-incinerator-frv",
+                           "name":  "M-104 Incinerator FRV",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Incinerator FRV Stratagem Icon Background.svg",
+                           "icon":  "m-104-incinerator-frv.svg"
+                       },
+                       {
+                           "id":  "m-105-stalwart",
+                           "name":  "M-105 Stalwart",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "up",
+                                        "left"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Stalwart Stratagem Icon Background.svg",
+                           "icon":  "m-105-stalwart.svg"
+                       },
+                       {
+                           "id":  "md-17-anti-tank-mines",
+                           "name":  "MD-17 Anti-Tank Mines",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "120s",
+                           "wiki_image":  "Anti-Tank Mines Stratagem Icon Background.svg",
+                           "icon":  "md-17-anti-tank-mines.svg"
+                       },
+                       {
+                           "id":  "md-6-anti-personnel-minefield",
+                           "name":  "MD-6 Anti-Personnel Minefield",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "120s",
+                           "wiki_image":  "Anti-Personnel Minefield Stratagem Icon Background.svg",
+                           "icon":  "md-6-anti-personnel-minefield.svg"
+                       },
+                       {
+                           "id":  "md-8-gas-mines",
+                           "name":  "MD-8 Gas Mines",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "120s",
+                           "wiki_image":  "Gas Mines Stratagem Icon Background.svg",
+                           "icon":  "md-8-gas-mines.svg"
+                       },
+                       {
+                           "id":  "md-i4-incendiary-mines",
+                           "name":  "MD-I4 Incendiary Mines",
+                           "permit":  "Defensive",
+                           "type":  "Emplacement",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "left",
+                                        "down"
+                                    ],
+                           "cooldown":  "120s",
+                           "wiki_image":  "Incendiary Mines Stratagem Icon Background.svg",
+                           "icon":  "md-i4-incendiary-mines.svg"
+                       },
+                       {
+                           "id":  "mg-206-heavy-machine-gun",
+                           "name":  "MG-206 Heavy Machine Gun",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Heavy Machine Gun Stratagem Icon Background.svg",
+                           "icon":  "mg-206-heavy-machine-gun.svg"
+                       },
+                       {
+                           "id":  "mg-43-machine-gun",
+                           "name":  "MG-43 Machine Gun",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Machine Gun Stratagem Icon Background.svg",
+                           "icon":  "mg-43-machine-gun.svg"
+                       },
+                       {
+                           "id":  "mgx-42-bullet-storm",
+                           "name":  "MGX-42 Bullet Storm",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "up",
+                                        "left"
+                                    ],
+                           "cooldown":  "70s",
+                           "wiki_image":  "Bullet Storm Stratagem Icon Background.svg",
+                           "icon":  "mgx-42-bullet-storm.svg"
+                       },
+                       {
+                           "id":  "mls-4x-commando",
+                           "name":  "MLS-4X Commando",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "down",
+                                        "right"
+                                    ],
+                           "cooldown":  "120s",
+                           "wiki_image":  "Commando Stratagem Icon Background.svg",
+                           "icon":  "mls-4x-commando.svg"
+                       },
+                       {
+                           "id":  "ms-11-solo-silo",
+                           "name":  "MS-11 Solo Silo",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "Solo Silo Stratagem Icon Background.svg",
+                           "icon":  "ms-11-solo-silo.svg"
+                       },
+                       {
+                           "id":  "orbital-120mm-he-barrage",
+                           "name":  "Orbital 120mm HE Barrage",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "down"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "Orbital 120mm HE Barrage Stratagem Icon Background.svg",
+                           "icon":  "orbital-120mm-he-barrage.svg"
+                       },
+                       {
+                           "id":  "orbital-380mm-he-barrage",
+                           "name":  "Orbital 380mm HE Barrage",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "up",
+                                        "left",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "240s",
+                           "wiki_image":  "Orbital 380mm HE Barrage Stratagem Icon Background.svg",
+                           "icon":  "orbital-380mm-he-barrage.svg"
+                       },
+                       {
+                           "id":  "orbital-airburst-strike",
+                           "name":  "Orbital Airburst Strike",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "right"
+                                    ],
+                           "cooldown":  "100s",
+                           "wiki_image":  "Orbital Airburst Strike Stratagem Icon Background.svg",
+                           "icon":  "orbital-airburst-strike.svg"
+                       },
+                       {
+                           "id":  "orbital-ems-strike",
+                           "name":  "Orbital EMS Strike",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "left",
+                                        "down"
+                                    ],
+                           "cooldown":  "75s",
+                           "wiki_image":  "Orbital EMS Strike Stratagem Icon Background.svg",
+                           "icon":  "orbital-ems-strike.svg"
+                       },
+                       {
+                           "id":  "orbital-gas-strike",
+                           "name":  "Orbital Gas Strike",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "down",
+                                        "right"
+                                    ],
+                           "cooldown":  "75s",
+                           "wiki_image":  "Orbital Gas Strike Stratagem Icon Background.svg",
+                           "icon":  "orbital-gas-strike.svg"
+                       },
+                       {
+                           "id":  "orbital-gatling-barrage",
+                           "name":  "Orbital Gatling Barrage",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "70s",
+                           "wiki_image":  "Orbital Gatling Barrage Stratagem Icon Background.svg",
+                           "icon":  "orbital-gatling-barrage.svg"
+                       },
+                       {
+                           "id":  "orbital-illumination-flare",
+                           "name":  "Orbital Illumination Flare",
+                           "permit":  "",
+                           "type":  "Other",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "left",
+                                        "left"
+                                    ],
+                           "cooldown":  "N/A",
+                           "wiki_image":  "Orbital Illumination Flare Stratagem Icon Background.svg",
+                           "icon":  "orbital-illumination-flare.svg"
+                       },
+                       {
+                           "id":  "orbital-laser",
+                           "name":  "Orbital Laser",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "right",
+                                        "down"
+                                    ],
+                           "cooldown":  "300s",
+                           "wiki_image":  "Orbital Laser Stratagem Icon Background.svg",
+                           "icon":  "orbital-laser.svg"
+                       },
+                       {
+                           "id":  "orbital-napalm-barrage",
+                           "name":  "Orbital Napalm Barrage",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "up"
+                                    ],
+                           "cooldown":  "240s",
+                           "wiki_image":  "Orbital Napalm Barrage Stratagem Icon Background.svg",
+                           "icon":  "orbital-napalm-barrage.svg"
+                       },
+                       {
+                           "id":  "orbital-precision-strike",
+                           "name":  "Orbital Precision Strike",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "up"
+                                    ],
+                           "cooldown":  "90s",
+                           "wiki_image":  "Orbital Precision Strike Stratagem Icon Background.svg",
+                           "icon":  "orbital-precision-strike.svg"
+                       },
+                       {
+                           "id":  "orbital-railcannon-strike",
+                           "name":  "Orbital Railcannon Strike",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "up",
+                                        "down",
+                                        "down",
+                                        "right"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "Orbital Railcannon Strike Stratagem Icon Background.svg",
+                           "icon":  "orbital-railcannon-strike.svg"
+                       },
+                       {
+                           "id":  "orbital-smoke-strike",
+                           "name":  "Orbital Smoke Strike",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "right",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "75s",
+                           "wiki_image":  "Orbital Smoke Strike Stratagem Icon Background.svg",
+                           "icon":  "orbital-smoke-strike.svg"
+                       },
+                       {
+                           "id":  "orbital-walking-barrage",
+                           "name":  "Orbital Walking Barrage",
+                           "permit":  "Offensive",
+                           "type":  "Orbital",
+                           "code":  [
+                                        "right",
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "right",
+                                        "down"
+                                    ],
+                           "cooldown":  "240s",
+                           "wiki_image":  "Orbital Walking Barrage Stratagem Icon Background.svg",
+                           "icon":  "orbital-walking-barrage.svg"
+                       },
+                       {
+                           "id":  "plas-45-epoch",
+                           "name":  "PLAS-45 Epoch",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Epoch Stratagem Icon Background.svg",
+                           "icon":  "plas-45-epoch.svg"
+                       },
+                       {
+                           "id":  "portable-comms-relay",
+                           "name":  "Portable Comms Relay",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "up",
+                                        "up",
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "left",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Cargo Container Stratagem Icon Background.svg",
+                           "icon":  "portable-comms-relay.svg"
+                       },
+                       {
+                           "id":  "prospecting-drill",
+                           "name":  "Prospecting Drill",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "left",
+                                        "right",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Drill Stratagem Icon Background.svg",
+                           "icon":  "prospecting-drill.svg"
+                       },
+                       {
+                           "id":  "reinforce",
+                           "name":  "Reinforce",
+                           "permit":  "",
+                           "type":  "Ship",
+                           "code":  [
+                                        "up",
+                                        "down",
+                                        "right",
+                                        "left",
+                                        "up"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Reinforce Stratagem Icon Background.svg",
+                           "icon":  "reinforce.svg"
+                       },
+                       {
+                           "id":  "resupply",
+                           "name":  "Resupply",
+                           "permit":  "",
+                           "type":  "Ship",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "180s",
+                           "wiki_image":  "Resupply Stratagem Icon Background.svg",
+                           "icon":  "resupply.svg"
+                       },
+                       {
+                           "id":  "rl-77-airburst-rocket-launcher",
+                           "name":  "RL-77 Airburst Rocket Launcher",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "up",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Airburst Rocket Launcher Stratagem Icon Background.svg",
+                           "icon":  "rl-77-airburst-rocket-launcher.svg"
+                       },
+                       {
+                           "id":  "rs-422-railgun",
+                           "name":  "RS-422 Railgun",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Railgun Stratagem Icon Background.svg",
+                           "icon":  "rs-422-railgun.svg"
+                       },
+                       {
+                           "id":  "s-11-speargun",
+                           "name":  "S-11 Speargun",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Speargun Stratagem Icon Background.svg",
+                           "icon":  "s-11-speargun.svg"
+                       },
+                       {
+                           "id":  "seaf-artillery",
+                           "name":  "SEAF Artillery",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "right",
+                                        "up",
+                                        "up",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "SEAF Artillery Stratagem Icon Background.svg",
+                           "icon":  "seaf-artillery.svg"
+                       },
+                       {
+                           "id":  "seismic-probe",
+                           "name":  "Seismic Probe",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "up",
+                                        "up",
+                                        "left",
+                                        "right",
+                                        "down",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Seismic Probe Stratagem Icon Background.svg",
+                           "icon":  "seismic-probe.svg"
+                       },
+                       {
+                           "id":  "sh-20-ballistic-shield-backpack",
+                           "name":  "SH-20 Ballistic Shield Backpack",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "down",
+                                        "up",
+                                        "left"
+                                    ],
+                           "cooldown":  "240s",
+                           "wiki_image":  "Ballistic Shield Backpack Stratagem Icon Background.svg",
+                           "icon":  "sh-20-ballistic-shield-backpack.svg"
+                       },
+                       {
+                           "id":  "sh-32-shield-generator-pack",
+                           "name":  "SH-32 Shield Generator Pack",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "right",
+                                        "left",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Shield Generator Pack Stratagem Icon Background.svg",
+                           "icon":  "sh-32-shield-generator-pack.svg"
+                       },
+                       {
+                           "id":  "sh-51-directional-shield",
+                           "name":  "SH-51 Directional Shield",
+                           "permit":  "Supply",
+                           "type":  "Backpack",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "right",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "300s",
+                           "wiki_image":  "Directional Shield Stratagem Icon Background.svg",
+                           "icon":  "sh-51-directional-shield.svg"
+                       },
+                       {
+                           "id":  "sos-beacon",
+                           "name":  "SoS Beacon",
+                           "permit":  "Supply",
+                           "type":  "Ship",
+                           "code":  [
+                                        "up",
+                                        "down",
+                                        "right",
+                                        "up"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "SOS Beacon Stratagem Icon Background.svg",
+                           "icon":  "sos-beacon.svg"
+                       },
+                       {
+                           "id":  "sssd-delivery",
+                           "name":  "SSSD Delivery",
+                           "permit":  "",
+                           "type":  "",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "down",
+                                        "down",
+                                        "down",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "",
+                           "wiki_image":  "Upload Data Stratagem Icon Background.svg",
+                           "icon":  "sssd-delivery.svg"
+                       },
+                       {
+                           "id":  "sta-x3-w-a-s-p-launcher",
+                           "name":  "StA-X3 W.A.S.P. Launcher",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "down",
+                                        "up",
+                                        "down",
+                                        "right"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "W.A.S.P. Launcher Stratagem Icon Background.svg",
+                           "icon":  "sta-x3-w-a-s-p-launcher.svg"
+                       },
+                       {
+                           "id":  "super-earth-flag",
+                           "name":  "Super Earth Flag",
+                           "permit":  "",
+                           "type":  "",
+                           "code":  [
+                                        "down",
+                                        "up",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "",
+                           "wiki_image":  "Super Earth Flag Stratagem Icon Background.svg",
+                           "icon":  "super-earth-flag.svg"
+                       },
+                       {
+                           "id":  "tactical-video-camera",
+                           "name":  "Tactical Video Camera",
+                           "permit":  "Supply",
+                           "type":  "Objective",
+                           "code":  [
+                                        "right",
+                                        "down",
+                                        "down",
+                                        "up",
+                                        "left",
+                                        "left",
+                                        "up"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "placeholder.png",
+                           "icon":  "tactical-video-camera.png"
+                       },
+                       {
+                           "id":  "td-220-bastion-mk-xvi",
+                           "name":  "TD-220 Bastion MK XVI",
+                           "permit":  "Supply",
+                           "type":  "Vehicle",
+                           "code":  [
+                                        "left",
+                                        "down",
+                                        "right",
+                                        "down",
+                                        "left",
+                                        "down",
+                                        "up",
+                                        "down",
+                                        "up"
+                                    ],
+                           "cooldown":  "780s",
+                           "wiki_image":  "Bastion MK XVI Stratagem Icon Background.svg",
+                           "icon":  "td-220-bastion-mk-xvi.svg"
+                       },
+                       {
+                           "id":  "tectonic-drill",
+                           "name":  "Tectonic Drill",
+                           "permit":  "Supply",
+                           "type":  "Objective",
+                           "code":  [
+                                        "up",
+                                        "down",
+                                        "up",
+                                        "down",
+                                        "up",
+                                        "down"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Drill Stratagem Icon Background.svg",
+                           "icon":  "tectonic-drill.svg"
+                       },
+                       {
+                           "id":  "tx-41-sterilizer",
+                           "name":  "TX-41 Sterilizer",
+                           "permit":  "Supply",
+                           "type":  "Support Weapon",
+                           "code":  [
+                                        "down",
+                                        "left",
+                                        "up",
+                                        "down",
+                                        "left"
+                                    ],
+                           "cooldown":  "480s",
+                           "wiki_image":  "Sterilizer Stratagem Icon Background.svg",
+                           "icon":  "tx-41-sterilizer.svg"
+                       },
+                       {
+                           "id":  "upload-data",
+                           "name":  "Upload Data",
+                           "permit":  "",
+                           "type":  "Objective",
+                           "code":  [
+                                        "left",
+                                        "right",
+                                        "up",
+                                        "up",
+                                        "up"
+                                    ],
+                           "cooldown":  "0s",
+                           "wiki_image":  "Upload Data Stratagem Icon Background.svg",
+                           "icon":  "upload-data.svg"
+                       }
+                   ]
+}

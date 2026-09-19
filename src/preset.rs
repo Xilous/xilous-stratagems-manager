@@ -18,6 +18,9 @@ pub struct LocalTemplate {
     pub path: String,
     #[serde(flatten)]
     pub geometry: SampleGeometry,
+    /// Catalog id of the stratagem this template shows, once identified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stratagem: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -27,6 +30,17 @@ pub struct Preset {
     pub booster: Option<LocalTemplate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_booster: Option<LocalTemplate>,
+}
+
+impl Preset {
+    /// Catalog ids of the four stratagems in saved order.
+    pub fn stratagem_ids(&self) -> [Option<String>; 4] {
+        std::array::from_fn(|index| {
+            self.stratagems
+                .get(index)
+                .and_then(|template| template.stratagem.clone())
+        })
+    }
 }
 
 pub struct CapturedPreset {
@@ -163,6 +177,7 @@ pub fn save_captured_preset(path: &Path, name: &str, captured: &CapturedPreset) 
         preset.stratagems.push(LocalTemplate {
             path: relative,
             geometry: sample.geometry,
+            stratagem: None,
         });
     }
     if let Some(sample) = &captured.booster {
@@ -175,23 +190,14 @@ pub fn save_captured_preset(path: &Path, name: &str, captured: &CapturedPreset) 
         preset.booster = Some(LocalTemplate {
             path: relative,
             geometry: sample.geometry,
+            stratagem: None,
         });
     }
 
     validate_preset(name, &preset)?;
     presets.schema_version = PRESET_SCHEMA_VERSION;
     presets.presets.insert(name.to_string(), preset.clone());
-
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-
-    let json = serde_json::to_string_pretty(&presets)?;
-    std::fs::write(path, json).with_context(|| format!("failed to write {}", path.display()))?;
+    write_preset_file(path, &presets)?;
     remove_template_image_if_exists(
         path,
         &format!("{LOCAL_TEMPLATES_DIR}/{name}/fallback-booster.png"),
@@ -203,6 +209,66 @@ pub fn save_captured_preset(path: &Path, name: &str, captured: &CapturedPreset) 
         )?;
     }
     Ok(preset)
+}
+
+/// Records the identified catalog ids for all four stratagem slots of a preset.
+pub fn set_preset_stratagems(
+    path: &Path,
+    name: &str,
+    ids: &[Option<String>; 4],
+) -> Result<Preset> {
+    let mut presets = load_preset_file(path)?;
+    let preset = presets
+        .presets
+        .get_mut(name)
+        .with_context(|| format!("preset not found: {name}"))?;
+    for (template, id) in preset.stratagems.iter_mut().zip(ids) {
+        template.stratagem = id.clone();
+    }
+    let saved = preset.clone();
+    write_preset_file(path, &presets)?;
+    Ok(saved)
+}
+
+/// Overrides the catalog id of one stratagem slot (0-based).
+pub fn set_preset_stratagem(
+    path: &Path,
+    name: &str,
+    slot: usize,
+    id: Option<String>,
+) -> Result<Preset> {
+    let mut presets = load_preset_file(path)?;
+    let preset = presets
+        .presets
+        .get_mut(name)
+        .with_context(|| format!("preset not found: {name}"))?;
+    let template = preset
+        .stratagems
+        .get_mut(slot)
+        .with_context(|| format!("preset {name} has no stratagem slot {}", slot + 1))?;
+    template.stratagem = id;
+    let saved = preset.clone();
+    write_preset_file(path, &presets)?;
+    Ok(saved)
+}
+
+/// Removes a preset and its captured templates.
+pub fn delete_preset(path: &Path, name: &str) -> Result<()> {
+    validate_preset_name(name)?;
+    if path.exists() {
+        let mut presets = load_preset_file(path)?;
+        if presets.presets.remove(name).is_some() {
+            write_preset_file(path, &presets)?;
+        }
+    }
+    let directory = resolve_template_path(path, &format!("{LOCAL_TEMPLATES_DIR}/{name}"))?;
+    match fs::remove_dir_all(&directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to remove {}", directory.display()))
+        }
+    }
 }
 
 pub fn save_fallback_booster(path: &Path, name: &str, sample: &ImageSample) -> Result<Preset> {
@@ -222,12 +288,11 @@ pub fn save_fallback_booster(path: &Path, name: &str, sample: &ImageSample) -> R
     preset.fallback_booster = Some(LocalTemplate {
         path: relative,
         geometry: sample.geometry,
+        stratagem: None,
     });
     validate_preset(name, preset)?;
     let saved = preset.clone();
-
-    let json = serde_json::to_string_pretty(&presets)?;
-    std::fs::write(path, json).with_context(|| format!("failed to write {}", path.display()))?;
+    write_preset_file(path, &presets)?;
     Ok(saved)
 }
 
@@ -317,6 +382,18 @@ fn load_preset_file(path: &Path) -> Result<PresetFile> {
         PRESET_SCHEMA_VERSION
     );
     Ok(presets)
+}
+
+fn write_preset_file(path: &Path, presets: &PresetFile) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let json = serde_json::to_string_pretty(presets)?;
+    std::fs::write(path, json).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn validate_preset_name(name: &str) -> Result<()> {

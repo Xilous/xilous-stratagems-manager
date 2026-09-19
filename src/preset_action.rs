@@ -9,7 +9,7 @@ use crate::automation::AutomationSession;
 use crate::capture::CaptureSessionManager;
 use crate::color_normalization::ColorNormalizer;
 use crate::game_settings::read_color_settings;
-use crate::game_window::find_game_window;
+use crate::game_window::{find_game_window, find_game_window_once};
 use crate::input;
 use crate::loadout::{
     BoosterApplyOutcome, UiState, apply_booster_from_home, apply_empty_loadout_preset,
@@ -23,37 +23,16 @@ use crate::preset::{
 };
 #[cfg(feature = "diagnostics")]
 use crate::vision::log_home_tone;
-use crate::vision::{RecognizerRuntime, RecognizerSession, RoiObservation};
+use crate::vision::{RecognizerRuntime, RecognizerSession, RoiObservation, SlotLayout};
 
 const READY_UP_HOLD_MS: u64 = 45;
 const FALLBACK_BOOSTER_SELECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresetActionOutcome {
-    Saved,
-    Applied,
-}
-
-pub struct PresetHotkeyBinding {
-    pub hotkey: input::HotkeySpec,
-    pub preset: String,
-}
-
-pub fn preset_hotkeys(
-    modifiers: input::HotkeyModifiers,
-    keys: &[input::Key],
-) -> Vec<PresetHotkeyBinding> {
-    keys.iter()
-        .enumerate()
-        .map(|(index, key)| PresetHotkeyBinding {
-            hotkey: input::HotkeySpec {
-                id: 1001 + index as i32,
-                modifiers,
-                key: *key,
-            },
-            preset: format!("preset_{}", index + 1),
-        })
-        .collect()
+    /// The loadout on screen was saved; `captured` holds the slot crops.
+    Saved { captured: CapturedPreset },
+    /// The preset was applied; `home` is the loadout home observed afterwards.
+    Applied { home: RoiObservation, ui_scale: f32 },
 }
 
 pub struct PresetActionConfig<'a> {
@@ -62,6 +41,25 @@ pub struct PresetActionConfig<'a> {
     pub auto_ready_up: bool,
     pub save_fallback_when_taken: bool,
     pub events: &'a AppEventSink,
+}
+
+/// Captures one frame and reports which loadout UI state is on screen, without
+/// sending any input. Used to tell a mission from the loadout screen.
+pub fn quick_ui_state(
+    runtime: &RecognizerRuntime,
+    capture_session: &mut CaptureSessionManager,
+) -> Result<UiState> {
+    let game_window = find_game_window_once()?;
+    let capture = capture_session
+        .get_or_create(&game_window)
+        .context("failed to get capture session")?;
+    let normalizer = ColorNormalizer::new(read_color_settings()?, capture.display_color_info())?;
+    let bound_region = bind_loadout_region(capture, runtime.calibration())?;
+    let recognizer = runtime.bind(bound_region.geometry);
+    let mut region = bound_region.region;
+    let image = region.capture(&normalizer)?;
+    let observation = recognizer.detect(image, SlotLayout::Home)?;
+    Ok(detect_ui_state(&observation))
 }
 
 pub fn handle_preset_hotkey(
@@ -124,7 +122,7 @@ pub fn handle_preset_hotkey(
                 .context("failed to collect current preset")?;
             save_current_preset(config, preset_name, &captured)?;
             (
-                PresetActionOutcome::Saved,
+                PresetActionOutcome::Saved { captured },
                 false,
                 PresetCompletion::Complete,
             )
@@ -155,7 +153,7 @@ pub fn handle_preset_hotkey(
             )
             .context("failed to apply stratagems from empty home")?;
             let booster =
-                apply_booster_if_present(recognizer, &mut automation, config, &preset, home)?;
+                apply_booster_if_present(recognizer, &mut automation, config, &preset, &home)?;
             let (ready_up_after_apply, completion) = match booster {
                 Some(BoosterApplyOutcome::Applied) => (true, PresetCompletion::Complete),
                 Some(BoosterApplyOutcome::Unavailable) => {
@@ -177,7 +175,10 @@ pub fn handle_preset_hotkey(
                 None => (false, PresetCompletion::Complete),
             };
             (
-                PresetActionOutcome::Applied,
+                PresetActionOutcome::Applied {
+                    home,
+                    ui_scale: recognizer.ui_scale(),
+                },
                 ready_up_after_apply,
                 completion,
             )
@@ -324,7 +325,7 @@ fn apply_booster_if_present(
     automation: &mut AutomationSession<'_>,
     config: &PresetActionConfig<'_>,
     preset: &Preset,
-    home: RoiObservation,
+    home: &RoiObservation,
 ) -> Result<Option<BoosterApplyOutcome>> {
     let Some(booster) = preset.booster.as_ref() else {
         return Ok(None);
@@ -333,7 +334,7 @@ fn apply_booster_if_present(
         recognizer,
         automation,
         config.events,
-        &home,
+        home,
         config.presets,
         booster,
         preset.fallback_booster.as_ref(),

@@ -8,25 +8,52 @@ auto_ready_up = false
 # If a saved Booster is already in use, save a manually selected one as its fallback.
 save_fallback_when_taken = false
 
-# Optional labels shown beside preset hotkeys in order.
-# Remove the leading # from the labels you want to use.
+# Optional labels shown beside presets in the window.
 [presets.labels]
-# preset_1 = "Terminids 1"
-# preset_2 = "Terminids 2"
-# preset_3 = "Automatons 1"
-# preset_4 = "Automatons 2"
-# preset_5 = "Illuminate 1"
-# preset_6 = "Illuminate 2"
+# preset_1 = "Terminids"
+# preset_2 = "Automatons"
+# preset_3 = "Illuminate"
+# preset_4 = "Eradicate"
 
 [hotkey]
-# Hold these modifiers to show the overlay.
+# Modifiers held together with the preset keys on the loadout screen.
 # Values: shift, ctrl, alt, win.
-modifiers = ["ctrl", "shift"]
+modifiers = ["shift"]
 
-# Preset keys, mapped to preset_1..preset_N in order.
-# Values: f1-f12. Use 1-12 keys.
-keys = ["f7", "f8", "f9", "f10", "f11", "f12"]
+# Preset keys, mapped to preset_1..preset_4 in order. Values: f1-f12. Use 1-4 keys.
+keys = ["f1", "f2", "f3", "f4"]
 
-[overlay]
-# Show the preset overlay.
+[mission]
+# Call in Stratagems during missions with hotkeys.
 enabled = true
+
+# Keys that call in slots 1-4 of the active loadout while Helldivers 2 is focused.
+# A key may include modifiers, e.g. "alt+f1".
+slot_keys = ["f1", "f2", "f3", "f4"]
+
+# Key bound to "Stratagem Menu" in the game.
+menu_key = "lctrl"
+
+# hold: the menu stays open while the key is held (game default). press: the key toggles it.
+menu_mode = "hold"
+
+# Keys the game reads as Stratagem directions: arrows or wasd.
+# Arrow keys are strongly recommended so movement keys never corrupt a code.
+direction_keys = "arrows"
+
+# Timing in milliseconds.
+menu_open_delay_ms = 60
+key_hold_ms = 40
+key_gap_ms = 40
+menu_release_delay_ms = 40
+
+# Hotkeys for mission Stratagems that are available in every loadout.
+# Assign them in the window, or here by catalog id. Unassigned ones are inactive.
+[mission.bindings]
+# reinforce = "f5"
+# resupply = "f6"
+# sos-beacon = "ctrl+f5"
+
+[window]
+# Start with the window hidden in the tray.
+start_hidden = false

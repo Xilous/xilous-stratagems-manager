@@ -19,23 +19,14 @@ impl TrayHandle {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct TraySettings {
-    pub apply_in_saved_order: bool,
-    pub auto_ready_up: bool,
-    pub save_fallback_when_taken: bool,
-}
-
 pub enum TrayEvent {
-    ToggleApplyInSavedOrder,
-    ToggleAutoReadyUp,
-    ToggleSaveFallbackWhenTaken,
+    ShowWindow,
     ExitRequested,
 }
 
-pub fn spawn(settings: TraySettings) -> Result<TrayHandle> {
+pub fn spawn() -> Result<TrayHandle> {
     let (event_tx, events) = channel();
-    let platform = PlatformTray::spawn(settings, event_tx)?;
+    let platform = PlatformTray::spawn(event_tx)?;
     Ok(TrayHandle {
         _platform: platform,
         events,

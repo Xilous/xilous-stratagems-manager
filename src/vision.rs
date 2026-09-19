@@ -1,4 +1,5 @@
 mod booster;
+mod catalog_identifier;
 mod color;
 #[cfg(feature = "diagnostics")]
 mod diagnostics;
@@ -18,6 +19,7 @@ use crate::image_rect::ImageRect;
 use crate::item::ItemKind;
 
 pub(crate) use booster::crop_sample as crop_booster_sample;
+pub use catalog_identifier::CatalogIdentifier;
 pub use color::{icon_likeness, luma601_u8};
 #[cfg(feature = "diagnostics")]
 pub use diagnostics::init as init_diagnostics;

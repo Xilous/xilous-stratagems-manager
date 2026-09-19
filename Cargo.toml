@@ -1,9 +1,9 @@
 [package]
 name = "xilous-stratagems-manager"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 build = "build.rs"
-description = "A Windows utility for saving and applying Stratagem and Booster presets from the Helldivers 2 loadout screen"
+description = "Windows utility that saves and applies Helldivers 2 loadouts and calls in Stratagems with hotkeys"
 license = "GPL-3.0-or-later"
 readme = "README.md"
 
@@ -21,10 +21,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.36.2"
 fast_image_resize = { version = "6.1.0", features = ["image"] }
 half = "2.7.1"
-image = { version = "0.25.9", default-features = false, features = ["png"] }
+image = { version = "0.25.9", default-features = false, features = ["png", "ico"] }
 rayon = "1.12.0"
+resvg = { version = "0.48.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 toml = "1.1.3"

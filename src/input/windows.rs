@@ -39,6 +39,40 @@ impl Key {
     fn scan_code(self) -> u16 {
         match self {
             Key::B => 0x30,
+            Key::W => 0x11,
+            Key::A => 0x1E,
+            Key::S => 0x1F,
+            Key::D => 0x20,
+            Key::Up => 0x48,
+            Key::Down => 0x50,
+            Key::Left => 0x4B,
+            Key::Right => 0x4D,
+            Key::Digit1 => 0x02,
+            Key::Digit2 => 0x03,
+            Key::Digit3 => 0x04,
+            Key::Digit4 => 0x05,
+            Key::Digit5 => 0x06,
+            Key::Digit6 => 0x07,
+            Key::Digit7 => 0x08,
+            Key::Digit8 => 0x09,
+            Key::Digit9 => 0x0A,
+            Key::Digit0 => 0x0B,
+            Key::Numpad0 => 0x52,
+            Key::Numpad1 => 0x4F,
+            Key::Numpad2 => 0x50,
+            Key::Numpad3 => 0x51,
+            Key::Numpad4 => 0x4B,
+            Key::Numpad5 => 0x4C,
+            Key::Numpad6 => 0x4D,
+            Key::Numpad7 => 0x47,
+            Key::Numpad8 => 0x48,
+            Key::Numpad9 => 0x49,
+            Key::Home => 0x47,
+            Key::End => 0x4F,
+            Key::Insert => 0x52,
+            Key::Delete => 0x53,
+            Key::PageUp => 0x49,
+            Key::PageDown => 0x51,
             Key::F1 => 0x3B,
             Key::F2 => 0x3C,
             Key::F3 => 0x3D,
@@ -63,6 +97,40 @@ impl Key {
     fn virtual_key(self) -> u32 {
         match self {
             Key::B => 0x42,
+            Key::W => 0x57,
+            Key::A => 0x41,
+            Key::S => 0x53,
+            Key::D => 0x44,
+            Key::Up => 0x26,
+            Key::Down => 0x28,
+            Key::Left => 0x25,
+            Key::Right => 0x27,
+            Key::Digit0 => 0x30,
+            Key::Digit1 => 0x31,
+            Key::Digit2 => 0x32,
+            Key::Digit3 => 0x33,
+            Key::Digit4 => 0x34,
+            Key::Digit5 => 0x35,
+            Key::Digit6 => 0x36,
+            Key::Digit7 => 0x37,
+            Key::Digit8 => 0x38,
+            Key::Digit9 => 0x39,
+            Key::Numpad0 => 0x60,
+            Key::Numpad1 => 0x61,
+            Key::Numpad2 => 0x62,
+            Key::Numpad3 => 0x63,
+            Key::Numpad4 => 0x64,
+            Key::Numpad5 => 0x65,
+            Key::Numpad6 => 0x66,
+            Key::Numpad7 => 0x67,
+            Key::Numpad8 => 0x68,
+            Key::Numpad9 => 0x69,
+            Key::Home => 0x24,
+            Key::End => 0x23,
+            Key::Insert => 0x2D,
+            Key::Delete => 0x2E,
+            Key::PageUp => 0x21,
+            Key::PageDown => 0x22,
             Key::F1 => 0x70,
             Key::F2 => 0x71,
             Key::F3 => 0x72,
@@ -87,11 +155,27 @@ impl Key {
     }
 
     fn is_extended(self) -> bool {
-        matches!(self, Key::RCtrl | Key::RAlt | Key::LWin | Key::RWin)
+        matches!(
+            self,
+            Key::RCtrl
+                | Key::RAlt
+                | Key::LWin
+                | Key::RWin
+                | Key::Up
+                | Key::Down
+                | Key::Left
+                | Key::Right
+                | Key::Home
+                | Key::End
+                | Key::Insert
+                | Key::Delete
+                | Key::PageUp
+                | Key::PageDown
+        )
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HotkeyModifier {
     Shift,
@@ -101,12 +185,29 @@ pub enum HotkeyModifier {
 }
 
 impl HotkeyModifier {
-    fn name(self) -> &'static str {
+    pub const ALL: [HotkeyModifier; 4] = [
+        HotkeyModifier::Ctrl,
+        HotkeyModifier::Shift,
+        HotkeyModifier::Alt,
+        HotkeyModifier::Win,
+    ];
+
+    pub fn config_name(self) -> &'static str {
         match self {
             Self::Shift => "shift",
             Self::Ctrl => "ctrl",
             Self::Alt => "alt",
             Self::Win => "win",
+        }
+    }
+
+    pub fn from_config_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "shift" => Some(Self::Shift),
+            "ctrl" | "control" => Some(Self::Ctrl),
+            "alt" => Some(Self::Alt),
+            "win" | "super" => Some(Self::Win),
+            _ => None,
         }
     }
 
@@ -119,7 +220,7 @@ impl HotkeyModifier {
         }
     }
 
-    fn display_name(self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         match self {
             Self::Shift => "Shift",
             Self::Ctrl => "Ctrl",
@@ -147,16 +248,20 @@ impl HotkeyModifier {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HotkeyModifiers {
     values: [Option<HotkeyModifier>; 4],
 }
 
 impl HotkeyModifiers {
-    pub fn new(values: Vec<HotkeyModifier>) -> Result<Self> {
-        if values.is_empty() {
-            bail!("hotkey modifiers must not be empty");
+    /// A hotkey without modifiers (the bare key).
+    pub const fn none() -> Self {
+        Self {
+            values: [None, None, None, None],
         }
+    }
+
+    pub fn new(values: Vec<HotkeyModifier>) -> Result<Self> {
         if values.len() > 4 {
             bail!(
                 "hotkey modifiers support at most 4 keys, got {}",
@@ -165,16 +270,14 @@ impl HotkeyModifiers {
         }
 
         let mut registration_bits = 0u32;
-        let mut modifiers = Self {
-            values: [None, None, None, None],
-        };
+        let mut modifiers = Self::none();
 
         for (index, modifier) in values.into_iter().enumerate() {
             let bit = modifier.hotkey_modifiers().0;
             if registration_bits & bit != 0 {
                 bail!(
                     "hotkey modifiers cannot contain duplicate {}",
-                    modifier.name()
+                    modifier.config_name()
                 );
             }
             registration_bits |= bit;
@@ -182,6 +285,33 @@ impl HotkeyModifiers {
         }
 
         Ok(modifiers)
+    }
+
+    #[cfg(test)]
+    pub fn is_empty(self) -> bool {
+        self.values.iter().all(Option::is_none)
+    }
+
+    pub fn contains(self, modifier: HotkeyModifier) -> bool {
+        self.iter().any(|value| value == modifier)
+    }
+
+    /// Returns a copy with `modifier` added or removed.
+    pub fn toggled(self, modifier: HotkeyModifier, enabled: bool) -> Self {
+        let mut values = self
+            .iter()
+            .filter(|value| *value != modifier)
+            .collect::<Vec<_>>();
+        if enabled {
+            values.push(modifier);
+        }
+        // Order the modifiers canonically so equal sets compare equal.
+        values.sort_by_key(|value| {
+            HotkeyModifier::ALL
+                .iter()
+                .position(|candidate| candidate == value)
+        });
+        Self::new(values).expect("a set of at most four distinct modifiers is valid")
     }
 
     fn hotkey_modifiers(self) -> HOT_KEY_MODIFIERS {
@@ -202,11 +332,11 @@ impl HotkeyModifiers {
         self.iter().all(HotkeyModifier::is_down)
     }
 
-    fn iter(self) -> impl Iterator<Item = HotkeyModifier> {
+    pub fn iter(self) -> impl Iterator<Item = HotkeyModifier> {
         self.values.into_iter().flatten()
     }
 
-    fn label_with_key(self, key: Key) -> String {
+    pub fn label_with_key(self, key: Key) -> String {
         let mut parts = self
             .iter()
             .map(HotkeyModifier::display_name)
@@ -290,6 +420,19 @@ impl InputSession {
         send_single_input(keyboard_input(key, true), "key release input")?;
         self.injected.keys.retain(|pressed| *pressed != key);
         Ok(())
+    }
+
+    /// Presses and holds `key`; it is released by `release_key` or when the session drops.
+    pub fn press_key(&mut self, key: Key) -> Result<()> {
+        self.ensure_target()?;
+        trace!(key = key.name(), "key press input");
+        self.key_down(key)
+    }
+
+    pub fn release_key(&mut self, key: Key) -> Result<()> {
+        self.ensure_target()?;
+        trace!(key = key.name(), "key release input");
+        self.key_up(key)
     }
 
     fn left_button_down(&mut self) -> Result<()> {
@@ -452,7 +595,7 @@ pub struct HotkeySpec {
 }
 
 impl HotkeySpec {
-    fn label(self) -> String {
+    pub fn label(self) -> String {
         self.modifiers.label_with_key(self.key)
     }
 }
@@ -462,6 +605,10 @@ pub enum HotkeyPoll {
     Timeout,
 }
 
+/// A set of registered global hotkeys; they are unregistered on drop.
+///
+/// Hotkeys must be registered and polled on the same thread, because Windows
+/// posts `WM_HOTKEY` to the message queue of the registering thread.
 pub struct RegisteredHotkeys {
     hotkeys: Vec<HotkeySpec>,
 }
@@ -507,7 +654,7 @@ impl RegisteredHotkeys {
 
         if !failures.is_empty() {
             bail!(
-                "the following hotkeys could not be registered:\n- {}\n\nChange them in the configuration file",
+                "the following hotkeys could not be registered:\n- {}",
                 failures.join("\n- ")
             );
         }
@@ -515,23 +662,6 @@ impl RegisteredHotkeys {
         Ok(Self {
             hotkeys: registered,
         })
-    }
-
-    pub fn wait_timeout(&self, timeout: Duration) -> Result<HotkeyPoll> {
-        wait_for_any_hotkey_message_timeout(&self.hotkeys, timeout)
-    }
-
-    pub fn discard_pending(&self) {
-        while take_pending_hotkey().is_some() {}
-    }
-
-    pub fn wait_released(&self, hotkey_id: i32, timeout: Duration) -> bool {
-        let Some(hotkey) = self.hotkeys.iter().find(|hotkey| hotkey.id == hotkey_id) else {
-            return false;
-        };
-        let mut release_keys = hotkey.modifiers.release_keys();
-        release_keys.push(hotkey.key);
-        wait_keys_released(&release_keys, timeout)
     }
 }
 
@@ -545,27 +675,33 @@ impl Drop for RegisteredHotkeys {
     }
 }
 
-fn wait_for_any_hotkey_message_timeout(
-    hotkeys: &[HotkeySpec],
-    timeout: Duration,
-) -> Result<HotkeyPoll> {
+/// Waits up to `timeout` for any `WM_HOTKEY` posted to the current thread.
+pub fn poll_hotkey(timeout: Duration) -> HotkeyPoll {
     let start = Instant::now();
 
     loop {
-        while let Some(hotkey_id) = take_pending_hotkey() {
-            if hotkeys.iter().any(|hotkey| hotkey.id == hotkey_id) {
-                return Ok(HotkeyPoll::Triggered(hotkey_id));
-            }
+        if let Some(hotkey_id) = take_pending_hotkey() {
+            return HotkeyPoll::Triggered(hotkey_id);
         }
 
         let elapsed = start.elapsed();
         if elapsed >= timeout {
-            return Ok(HotkeyPoll::Timeout);
+            return HotkeyPoll::Timeout;
         }
 
         let remaining = timeout.saturating_sub(elapsed);
         sleep(remaining.min(Duration::from_millis(20)));
     }
+}
+
+pub fn discard_pending_hotkeys() {
+    while take_pending_hotkey().is_some() {}
+}
+
+pub fn wait_hotkey_released(hotkey: &HotkeySpec, timeout: Duration) -> bool {
+    let mut release_keys = hotkey.modifiers.release_keys();
+    release_keys.push(hotkey.key);
+    wait_keys_released(&release_keys, timeout)
 }
 
 fn take_pending_hotkey() -> Option<i32> {
@@ -588,6 +724,6 @@ fn wait_keys_released(keys: &[Key], timeout: Duration) -> bool {
     keys.iter().all(|key| !is_pressed(*key))
 }
 
-fn is_pressed(key: Key) -> bool {
+pub fn is_pressed(key: Key) -> bool {
     unsafe { GetAsyncKeyState(key.virtual_key() as i32) < 0 }
 }

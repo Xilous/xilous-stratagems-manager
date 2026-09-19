@@ -20,24 +20,6 @@ impl AppEventSink {
 }
 
 #[derive(Clone, Debug)]
-pub struct OverlayPreset {
-    pub key_label: &'static str,
-    pub name: String,
-    pub label: Option<String>,
-    pub stratagems: Vec<String>,
-    pub booster: Option<String>,
-    pub fallback_booster: Option<String>,
-    pub status: OverlayPresetStatus,
-}
-
-#[derive(Clone, Debug)]
-pub enum OverlayPresetStatus {
-    Ready,
-    NotSaved,
-    Invalid(String),
-}
-
-#[derive(Clone, Debug)]
 pub enum PresetCompletion {
     Complete,
     BoosterUnavailable,
@@ -45,11 +27,9 @@ pub enum PresetCompletion {
     FallbackBoosterNotSaved,
 }
 
+/// Progress events emitted while a preset action runs.
 #[derive(Clone, Debug)]
 pub enum AppEvent {
-    PresetListUpdated {
-        presets: Vec<OverlayPreset>,
-    },
     PresetStarted {
         preset: String,
     },

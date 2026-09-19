@@ -3,8 +3,8 @@ use std::thread::JoinHandle;
 
 use anyhow::{Context, Result, anyhow};
 use tray_icon::{
-    Icon, TrayIconBuilder,
-    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
 };
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, MSG, PostThreadMessageW, TranslateMessage, WM_QUIT,
 };
 
-use super::{TrayEvent, TraySettings};
+use super::TrayEvent;
 
 pub(super) struct WindowsTray {
     thread_id: u32,
@@ -29,13 +29,13 @@ impl Drop for WindowsTray {
 }
 
 impl WindowsTray {
-    pub(super) fn spawn(settings: TraySettings, event_tx: Sender<TrayEvent>) -> Result<Self> {
+    pub(super) fn spawn(event_tx: Sender<TrayEvent>) -> Result<Self> {
         let (ready_tx, ready_rx) = sync_channel(1);
         let thread = std::thread::Builder::new()
             .name("xilous-stratagems-manager-tray".to_string())
             .spawn(move || {
                 let tray_thread_id = unsafe { GetCurrentThreadId() };
-                let result = run_tray(tray_thread_id, &ready_tx, settings, event_tx);
+                let result = run_tray(tray_thread_id, &ready_tx, event_tx);
                 if let Err(error) = result {
                     let _ = ready_tx.send(Err(format!("{error:#}")));
                 }
@@ -56,44 +56,15 @@ impl WindowsTray {
 fn run_tray(
     tray_thread_id: u32,
     ready_tx: &SyncSender<std::result::Result<u32, String>>,
-    settings: TraySettings,
     event_tx: Sender<TrayEvent>,
 ) -> Result<()> {
-    let apply_order_item = CheckMenuItem::with_id(
-        "apply_in_saved_order",
-        "Apply in saved order",
-        true,
-        settings.apply_in_saved_order,
-        None,
-    );
-    let apply_order_id = apply_order_item.id().clone();
-    let auto_ready_item = CheckMenuItem::with_id(
-        "auto_ready_up",
-        "Auto ready up",
-        true,
-        settings.auto_ready_up,
-        None,
-    );
-    let auto_ready_id = auto_ready_item.id().clone();
-    let save_fallback_when_taken_item = CheckMenuItem::with_id(
-        "save_fallback_when_taken",
-        "Save fallback for taken Booster",
-        true,
-        settings.save_fallback_when_taken,
-        None,
-    );
-    let save_fallback_when_taken_id = save_fallback_when_taken_item.id().clone();
+    let show_item = MenuItem::with_id("show", "Show window", true, None);
+    let show_id = show_item.id().clone();
     let separator = PredefinedMenuItem::separator();
     let close_item = MenuItem::with_id("close", "Exit", true, None);
     let close_id = close_item.id().clone();
-    let menu = Menu::with_items(&[
-        &apply_order_item,
-        &auto_ready_item,
-        &save_fallback_when_taken_item,
-        &separator,
-        &close_item,
-    ])
-    .context("failed to create tray menu")?;
+    let menu = Menu::with_items(&[&show_item, &separator, &close_item])
+        .context("failed to create tray menu")?;
     let icon = tray_icon()?;
     let _tray = TrayIconBuilder::new()
         .with_tooltip("Xilous Stratagems Manager")
@@ -103,22 +74,29 @@ fn run_tray(
         .build()
         .context("failed to create tray icon")?;
 
+    let menu_tx = event_tx.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        let tray_event = if event.id == apply_order_id {
-            TrayEvent::ToggleApplyInSavedOrder
-        } else if event.id == auto_ready_id {
-            TrayEvent::ToggleAutoReadyUp
-        } else if event.id == save_fallback_when_taken_id {
-            TrayEvent::ToggleSaveFallbackWhenTaken
+        let tray_event = if event.id == show_id {
+            TrayEvent::ShowWindow
         } else if event.id == close_id {
             TrayEvent::ExitRequested
         } else {
             return;
         };
         let exiting = matches!(tray_event, TrayEvent::ExitRequested);
-        let _ = event_tx.send(tray_event);
+        let _ = menu_tx.send(tray_event);
         if exiting {
             let _ = unsafe { PostThreadMessageW(tray_thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
+        }
+    }));
+    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            let _ = event_tx.send(TrayEvent::ShowWindow);
         }
     }));
 
