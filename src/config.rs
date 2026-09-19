@@ -59,7 +59,12 @@ impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
             modifiers: vec![input::HotkeyModifier::Shift],
-            keys: vec![input::Key::F1, input::Key::F2, input::Key::F3, input::Key::F4],
+            keys: vec![
+                input::Key::F1,
+                input::Key::F2,
+                input::Key::F3,
+                input::Key::F4,
+            ],
         }
     }
 }

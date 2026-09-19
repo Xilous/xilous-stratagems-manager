@@ -11,11 +11,12 @@ The program recognizes the game interface through screen capture and completes s
 
 ## Download and install
 
-1. Download the latest ZIP from [GitHub Releases](../../releases/latest), or [build from source](#building-from-source).
-2. Extract it to a separate writable folder.
-3. Run `XilousStratagemsManager.exe`.
+1. Download `XilousStratagemsManager-Setup-<version>.exe` from the [latest release](../../releases/latest) and run it. It installs for the current user (no administrator rights), adds a Start Menu entry, and offers a desktop shortcut and start-with-Windows.
+2. Windows SmartScreen may warn because the download is not code-signed; choose *More info* → *Run anyway*. Every release is built by GitHub Actions from the tagged source and carries a build attestation you can check with `gh attestation verify <file> --owner Xilous`.
 
-To update, extract the new `XilousStratagemsManager` folder over the existing folder. Settings are preserved.
+To update, run the newer installer over the existing installation. To uninstall, use *Apps & features*; your presets and settings are kept unless you choose to remove them.
+
+Prefer no installer? The release also has the portable `XilousStratagemsManager.exe`: put it in a folder of its own and run it. It keeps its settings, presets, and logs in a `data` folder next to itself.
 
 The application shows a window and a tray icon. Closing the window minimizes it; use **Exit** in the window or the tray menu to stop the tool.
 

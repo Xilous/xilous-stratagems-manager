@@ -34,7 +34,6 @@ impl Direction {
             Self::Right => '→',
         }
     }
-
 }
 
 pub fn code_arrows(code: &[Direction]) -> String {
@@ -109,7 +108,9 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn load() -> Result<Self> {
-        let json = CATALOG_JSON.strip_prefix('\u{feff}').unwrap_or(CATALOG_JSON);
+        let json = CATALOG_JSON
+            .strip_prefix('\u{feff}')
+            .unwrap_or(CATALOG_JSON);
         let file: CatalogFile =
             serde_json::from_str(json).context("failed to parse the embedded stratagem catalog")?;
         ensure!(
@@ -119,7 +120,10 @@ impl Catalog {
 
         let mut by_id = HashMap::with_capacity(file.stratagems.len());
         for (index, entry) in file.stratagems.iter().enumerate() {
-            ensure!(!entry.id.is_empty(), "catalog entry {index} has an empty id");
+            ensure!(
+                !entry.id.is_empty(),
+                "catalog entry {index} has an empty id"
+            );
             if by_id.insert(entry.id.clone(), index).is_some() {
                 bail!("catalog contains duplicate id {}", entry.id);
             }

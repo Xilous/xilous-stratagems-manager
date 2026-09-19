@@ -270,7 +270,9 @@ impl Engine {
             .map(|index| {
                 let name = format!("preset_{}", index + 1);
                 let mut summary = PresetSummary {
-                    hotkey_label: self.preset_modifiers.label_with_key(self.preset_keys[index]),
+                    hotkey_label: self
+                        .preset_modifiers
+                        .label_with_key(self.preset_keys[index]),
                     label: self.settings.labels.get(&name).cloned().unwrap_or_default(),
                     index,
                     name: name.clone(),
@@ -389,11 +391,18 @@ impl Engine {
                     .get(&preset)
                     .with_context(|| format!("{preset} is not saved"))?
                     .clone();
-                self.set_status(Tone::Working, format!("Identifying {}", self.preset_display_name(&preset)));
+                self.set_status(
+                    Tone::Working,
+                    format!("Identifying {}", self.preset_display_name(&preset)),
+                );
                 let ids = self.identify_preset_templates(&preset, &loaded, true);
                 let identified = ids.iter().flatten().count();
                 self.set_status(
-                    if identified == 4 { Tone::Success } else { Tone::Warning },
+                    if identified == 4 {
+                        Tone::Success
+                    } else {
+                        Tone::Warning
+                    },
                     format!(
                         "{}: {identified}/4 stratagems identified",
                         self.preset_display_name(&preset)
@@ -402,11 +411,18 @@ impl Engine {
             }
             UiCommand::DeletePreset { preset } => {
                 preset::delete_preset(&self.presets_path, &preset)?;
-                if self.active.as_ref().is_some_and(|active| active.preset == preset) {
+                if self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.preset == preset)
+                {
                     self.clear_active()?;
                 }
                 info!(preset = %preset, "preset deleted");
-                self.set_status(Tone::Info, format!("Deleted {}", self.preset_display_name(&preset)));
+                self.set_status(
+                    Tone::Info,
+                    format!("Deleted {}", self.preset_display_name(&preset)),
+                );
                 self.refresh_presets();
             }
             UiCommand::SetActiveFromPreset { preset } => {
@@ -421,7 +437,10 @@ impl Engine {
                 ));
                 self.set_status(
                     Tone::Info,
-                    format!("Active loadout set to {}", self.preset_display_name(&preset)),
+                    format!(
+                        "Active loadout set to {}",
+                        self.preset_display_name(&preset)
+                    ),
                 );
             }
             UiCommand::SetActiveSlot { slot, id } => {
@@ -493,18 +512,48 @@ impl Engine {
                     if let Some(mission) = document["mission"].as_table_like_mut() {
                         mission.remove("direction_keys");
                     }
-                    config::set_string(document, "mission", "direction_up", input_settings.direction_up.config_name());
-                    config::set_string(document, "mission", "direction_down", input_settings.direction_down.config_name());
-                    config::set_string(document, "mission", "direction_left", input_settings.direction_left.config_name());
-                    config::set_string(document, "mission", "direction_right", input_settings.direction_right.config_name());
+                    config::set_string(
+                        document,
+                        "mission",
+                        "direction_up",
+                        input_settings.direction_up.config_name(),
+                    );
+                    config::set_string(
+                        document,
+                        "mission",
+                        "direction_down",
+                        input_settings.direction_down.config_name(),
+                    );
+                    config::set_string(
+                        document,
+                        "mission",
+                        "direction_left",
+                        input_settings.direction_left.config_name(),
+                    );
+                    config::set_string(
+                        document,
+                        "mission",
+                        "direction_right",
+                        input_settings.direction_right.config_name(),
+                    );
                     config::set_integer(
                         document,
                         "mission",
                         "menu_open_delay_ms",
                         input_settings.menu_open_delay_ms,
                     );
-                    config::set_integer(document, "mission", "key_hold_ms", input_settings.key_hold_ms);
-                    config::set_integer(document, "mission", "key_gap_ms", input_settings.key_gap_ms);
+                    config::set_integer(
+                        document,
+                        "mission",
+                        "key_hold_ms",
+                        input_settings.key_hold_ms,
+                    );
+                    config::set_integer(
+                        document,
+                        "mission",
+                        "key_gap_ms",
+                        input_settings.key_gap_ms,
+                    );
                     config::set_integer(
                         document,
                         "mission",
@@ -530,7 +579,13 @@ impl Engine {
                 }
                 let value = binding.map(|binding| binding.config_string());
                 self.persist(|document| {
-                    config::set_nested_string(document, "mission", "bindings", &id, value.as_deref())
+                    config::set_nested_string(
+                        document,
+                        "mission",
+                        "bindings",
+                        &id,
+                        value.as_deref(),
+                    )
                 })?;
                 info!(
                     stratagem = %self.catalog.name_of(&id),
@@ -546,10 +601,7 @@ impl Engine {
         Ok(false)
     }
 
-    fn persist(
-        &self,
-        edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>,
-    ) -> Result<()> {
+    fn persist(&self, edit: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>) -> Result<()> {
         config::edit_config(&self.config_path, edit)
             .with_context(|| format!("failed to update {}", self.config_path.display()))
     }
@@ -559,7 +611,8 @@ impl Engine {
         while let Some(event) = self.tray.try_event() {
             match event {
                 TrayEvent::ShowWindow => {
-                    self.handle.update(|state| state.show_window_requested = true);
+                    self.handle
+                        .update(|state| state.show_window_requested = true);
                 }
                 TrayEvent::ExitRequested => {
                     info!("tray exit requested");
@@ -607,7 +660,8 @@ impl Engine {
         if foreground != self.game_foreground {
             self.game_foreground = foreground;
             debug!(foreground, "game window focus changed");
-            self.handle.update(|state| state.game_foreground = foreground);
+            self.handle
+                .update(|state| state.game_foreground = foreground);
         }
     }
 
@@ -620,9 +674,9 @@ impl Engine {
         }
 
         let mut push = |spec: HotkeySpec, action: HotkeyAction, owner: String| {
-            let duplicate = specs
-                .iter()
-                .any(|existing: &HotkeySpec| existing.modifiers == spec.modifiers && existing.key == spec.key);
+            let duplicate = specs.iter().any(|existing: &HotkeySpec| {
+                existing.modifiers == spec.modifiers && existing.key == spec.key
+            });
             if duplicate {
                 conflicts.push(format!("{} ({owner})", spec.label()));
             } else {
@@ -898,7 +952,10 @@ impl Engine {
 
         let display = self.preset_display_name(preset_name);
         if identified == 4 {
-            self.set_status(Tone::Success, format!("Saved {display}; all 4 stratagems identified"));
+            self.set_status(
+                Tone::Success,
+                format!("Saved {display}; all 4 stratagems identified"),
+            );
         } else {
             self.set_status(
                 Tone::Warning,
@@ -952,7 +1009,10 @@ impl Engine {
         self.set_active(ActiveLoadout::new(preset_name, ids, ActiveSource::Applied));
         let display = self.preset_display_name(preset_name);
         if identified == 4 {
-            self.set_status(Tone::Success, format!("Applied {display}; slot hotkeys armed"));
+            self.set_status(
+                Tone::Success,
+                format!("Applied {display}; slot hotkeys armed"),
+            );
         } else {
             self.set_status(
                 Tone::Warning,

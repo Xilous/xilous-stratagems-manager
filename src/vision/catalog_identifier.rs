@@ -114,7 +114,10 @@ impl CatalogIdentifier {
     pub fn from_catalog(catalog: &Catalog) -> Result<Self> {
         let started = Instant::now();
         let mut references = Vec::new();
-        for entry in catalog.loadout_entries().filter(|entry| entry.icon.is_some()) {
+        for entry in catalog
+            .loadout_entries()
+            .filter(|entry| entry.icon.is_some())
+        {
             let category = entry
                 .category()
                 .expect("loadout entries always have a category");
@@ -248,7 +251,12 @@ impl CatalogIdentifier {
         category: StratagemCategory,
     ) -> Result<Arc<Vec<PreparedReference>>> {
         let key = GeometryKey::new(sample, category);
-        if let Some(hit) = self.cache.lock().expect("identifier cache poisoned").get(&key) {
+        if let Some(hit) = self
+            .cache
+            .lock()
+            .expect("identifier cache poisoned")
+            .get(&key)
+        {
             return Ok(hit.clone());
         }
 
@@ -475,7 +483,10 @@ mod tests {
         let scales = std::env::var("XSM_SCALES").unwrap_or_else(|_| {
             "0.95,1.00,1.025,1.05,1.075,1.10,1.125,1.15,1.175,1.20,1.25".to_string()
         });
-        for scale in scales.split(',').map(|s| s.trim().parse::<f32>().expect("scale")) {
+        for scale in scales
+            .split(',')
+            .map(|s| s.trim().parse::<f32>().expect("scale"))
+        {
             let mut total = 0.0;
             let mut min_margin = f64::INFINITY;
             let mut lines = Vec::new();

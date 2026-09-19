@@ -88,7 +88,22 @@ jobs:
             -DestinationPath $zipPath `
             -CompressionLevel Optimal
 
+          # Windows installer (per-user, Start Menu entry, uninstaller).
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress | Out-Null
+          }
+          & $iscc /Q "/DAppVersion=$($package.version)" "installer\setup.iss"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+          $setupName = "XilousStratagemsManager-Setup-$($package.version).exe"
+          if (-not (Test-Path "dist\$setupName")) {
+            throw "Installer was not produced: dist\$setupName"
+          }
+
           "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+          "SETUP_NAME=$setupName" >> $env:GITHUB_ENV
 
       - name: Attest artifacts
         uses: actions/attest@v4
@@ -96,17 +111,31 @@ jobs:
           subject-path: |
             dist/package/XilousStratagemsManager/XilousStratagemsManager.exe
             dist/*.zip
+            dist/XilousStratagemsManager-Setup-*.exe
 
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $notes = @"
+**Download ``$env:SETUP_NAME`` below and run it.** It installs for the current user (no administrator rights), adds a Start Menu entry, and can optionally add a desktop shortcut and start with Windows. Uninstall from *Apps & features*; your presets are kept unless you choose to remove them.
+
+Prefer no installer? ``XilousStratagemsManager.exe`` is the portable build: put it in a folder of its own and run it.
+
+Windows SmartScreen may warn about an unsigned download: choose *More info* → *Run anyway*. All files carry a GitHub build attestation (``gh attestation verify <file> --owner Xilous``).
+
+See the [README](https://github.com/Xilous/xilous-stratagems-manager#readme) for setup, in particular the arrow-key stratagem input setting in the game.
+"@
+
           $releaseArgs = @(
             "release", "create", $env:GITHUB_REF_NAME,
-            "dist\$env:ZIP_NAME",
+            "dist\$env:SETUP_NAME#$env:SETUP_NAME (installer, recommended)",
+            "dist\package\XilousStratagemsManager\XilousStratagemsManager.exe#XilousStratagemsManager.exe (portable)",
+            "dist\$env:ZIP_NAME#$env:ZIP_NAME (portable exe + LICENSE)",
             "--verify-tag",
             "--generate-notes",
+            "--notes", $notes,
             "--title", "Xilous Stratagems Manager $env:GITHUB_REF_NAME"
           )
 

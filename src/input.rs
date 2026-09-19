@@ -176,10 +176,8 @@ impl Key {
     /// Keys that may be registered as global hotkeys. Movement, action, and
     /// modifier keys are excluded because a global hotkey swallows the key.
     pub fn is_bindable(self) -> bool {
-        !matches!(
-            self,
-            Self::B | Self::W | Self::A | Self::S | Self::D
-        ) && !matches!(self, Self::Up | Self::Down | Self::Left | Self::Right)
+        !matches!(self, Self::B | Self::W | Self::A | Self::S | Self::D)
+            && !matches!(self, Self::Up | Self::Down | Self::Left | Self::Right)
             && !self.is_modifier()
     }
 
@@ -310,9 +308,7 @@ impl Key {
 
     pub fn from_config_name(name: &str) -> Option<Key> {
         let name = name.trim().to_ascii_lowercase();
-        Self::ALL
-            .into_iter()
-            .find(|key| key.config_name() == name)
+        Self::ALL.into_iter().find(|key| key.config_name() == name)
     }
 }
 
@@ -362,7 +358,11 @@ impl FromStr for HotkeyBinding {
     fn from_str(value: &str) -> Result<Self> {
         let mut modifiers = Vec::new();
         let mut key = None;
-        for part in value.split('+').map(str::trim).filter(|part| !part.is_empty()) {
+        for part in value
+            .split('+')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
             if let Some(modifier) = HotkeyModifier::from_config_name(part) {
                 modifiers.push(modifier);
             } else if let Some(parsed) = Key::from_config_name(part) {
@@ -377,7 +377,10 @@ impl FromStr for HotkeyBinding {
             bail!("hotkey {value:?} does not name a key");
         };
         if !key.is_bindable() {
-            bail!("hotkey {value:?}: {} cannot be used as a hotkey", key.name());
+            bail!(
+                "hotkey {value:?}: {} cannot be used as a hotkey",
+                key.name()
+            );
         }
         Ok(Self {
             modifiers: HotkeyModifiers::new(modifiers)?,
@@ -393,13 +396,18 @@ impl fmt::Display for HotkeyBinding {
 }
 
 impl serde::Serialize for HotkeyBinding {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.config_string())
     }
 }
 
 impl<'de> serde::Deserialize<'de> for HotkeyBinding {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
         value.parse().map_err(serde::de::Error::custom)
     }

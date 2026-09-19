@@ -8,7 +8,9 @@ use anyhow::{Result, anyhow};
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions, Vec2};
 
 use crate::active_loadout::{ActiveLoadout, now_unix};
-use crate::app_state::{AppHandle, HotkeyStatus, LiveSettings, PresetSummary, StatusLine, Tone, UiCommand};
+use crate::app_state::{
+    AppHandle, HotkeyStatus, LiveSettings, PresetSummary, StatusLine, Tone, UiCommand,
+};
 use crate::catalog::{Catalog, StratagemEntry};
 use crate::input::{HotkeyBinding, HotkeyModifier, HotkeyModifiers, Key};
 use crate::item::StratagemCategory;
@@ -159,17 +161,13 @@ impl App {
         if let Some(texture) = self.icons.get(&key) {
             return texture.clone();
         }
-        let texture = self
-            .catalog
-            .render_icon(id, size)
-            .ok()
-            .map(|image| {
-                let color_image = ColorImage::from_rgba_unmultiplied(
-                    [image.width() as usize, image.height() as usize],
-                    image.as_raw(),
-                );
-                ctx.load_texture(format!("{id}@{size}"), color_image, TextureOptions::LINEAR)
-            });
+        let texture = self.catalog.render_icon(id, size).ok().map(|image| {
+            let color_image = ColorImage::from_rgba_unmultiplied(
+                [image.width() as usize, image.height() as usize],
+                image.as_raw(),
+            );
+            ctx.load_texture(format!("{id}@{size}"), color_image, TextureOptions::LINEAR)
+        });
         self.icons.insert(key, texture.clone());
         texture
     }
@@ -182,8 +180,7 @@ impl App {
             }
             None => {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-                ui.painter()
-                    .rect_filled(rect, 4.0, Color32::from_gray(45));
+                ui.painter().rect_filled(rect, 4.0, Color32::from_gray(45));
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -324,7 +321,13 @@ impl App {
                     .show(ui, |ui| {
                         if query.is_empty() {
                             ui.horizontal_wrapped(|ui| {
-                                if self.stratagem_tile(ui, None, "Unknown", None, target.current.is_none()) {
+                                if self.stratagem_tile(
+                                    ui,
+                                    None,
+                                    "Unknown",
+                                    None,
+                                    target.current.is_none(),
+                                ) {
                                     chosen = Some(None);
                                 }
                             });
@@ -344,9 +347,9 @@ impl App {
                                     .filter(|entry| entry.category() == Some(category))
                                     .filter(|entry| {
                                         if kind.is_empty() {
-                                            !KIND_ORDER
-                                                .iter()
-                                                .any(|known| known.eq_ignore_ascii_case(&entry.kind))
+                                            !KIND_ORDER.iter().any(|known| {
+                                                known.eq_ignore_ascii_case(&entry.kind)
+                                            })
                                         } else {
                                             entry.kind.eq_ignore_ascii_case(&kind)
                                         }
@@ -393,7 +396,8 @@ impl App {
                     });
                 }
                 PickerKind::ActiveSlot { slot } => {
-                    self.handle.send(UiCommand::SetActiveSlot { slot, id: choice });
+                    self.handle
+                        .send(UiCommand::SetActiveSlot { slot, id: choice });
                 }
             }
             self.picker = None;
@@ -412,12 +416,19 @@ impl App {
     ) -> Option<Option<HotkeyBinding>> {
         let mut changed = None;
         let modifiers = current.map_or(HotkeyModifiers::none(), |binding| binding.modifiers);
-        let selected_text = current.map_or_else(|| "Unassigned".to_string(), |binding| binding.key.name().to_string());
+        let selected_text = current.map_or_else(
+            || "Unassigned".to_string(),
+            |binding| binding.key.name().to_string(),
+        );
         egui::ComboBox::from_id_salt(salt)
             .selected_text(selected_text)
             .width(110.0)
             .show_ui(ui, |ui| {
-                if allow_unassigned && ui.selectable_label(current.is_none(), "Unassigned").clicked() {
+                if allow_unassigned
+                    && ui
+                        .selectable_label(current.is_none(), "Unassigned")
+                        .clicked()
+                {
                     changed = Some(None);
                 }
                 for key in Key::bindable() {
@@ -456,14 +467,30 @@ impl App {
                 chip(
                     ui,
                     "Helldivers 2",
-                    if snapshot.game_foreground { "focused" } else { "not focused" },
-                    if snapshot.game_foreground { Color32::from_rgb(90, 200, 120) } else { Color32::from_gray(150) },
+                    if snapshot.game_foreground {
+                        "focused"
+                    } else {
+                        "not focused"
+                    },
+                    if snapshot.game_foreground {
+                        Color32::from_rgb(90, 200, 120)
+                    } else {
+                        Color32::from_gray(150)
+                    },
                 );
                 chip(
                     ui,
                     "Hotkeys",
-                    if snapshot.hotkeys.armed { "armed" } else { "off" },
-                    if snapshot.hotkeys.armed { Color32::from_rgb(90, 200, 120) } else { Color32::from_gray(150) },
+                    if snapshot.hotkeys.armed {
+                        "armed"
+                    } else {
+                        "off"
+                    },
+                    if snapshot.hotkeys.armed {
+                        Color32::from_rgb(90, 200, 120)
+                    } else {
+                        Color32::from_gray(150)
+                    },
                 )
                 .on_hover_text(&snapshot.hotkeys.detail);
                 ui.separator();
@@ -474,11 +501,17 @@ impl App {
                 if let Some((done, total)) = snapshot.progress {
                     status.push_str(&format!("  {done}/{total}"));
                 }
-                ui.label(RichText::new(status).color(tone_color(snapshot.status.tone)).strong());
+                ui.label(
+                    RichText::new(status)
+                        .color(tone_color(snapshot.status.tone))
+                        .strong(),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .button("Exit")
-                        .on_hover_text("Stop the tool completely (closing the window only minimizes it)")
+                        .on_hover_text(
+                            "Stop the tool completely (closing the window only minimizes it)",
+                        )
                         .clicked()
                     {
                         self.handle.send(UiCommand::Exit);
@@ -488,7 +521,9 @@ impl App {
             if let Some(error) = &snapshot.fatal_error {
                 ui.colored_label(
                     tone_color(Tone::Error),
-                    format!("Automation stopped: {error}. Fix the problem and restart the application."),
+                    format!(
+                        "Automation stopped: {error}. Fix the problem and restart the application."
+                    ),
                 );
             }
             ui.add_space(4.0);
@@ -530,8 +565,16 @@ impl App {
         ui.group(|ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("Preset {}", preset.index + 1)).strong().size(16.0));
-                ui.label(RichText::new(&preset.hotkey_label).monospace().color(Color32::from_gray(190)));
+                ui.label(
+                    RichText::new(format!("Preset {}", preset.index + 1))
+                        .strong()
+                        .size(16.0),
+                );
+                ui.label(
+                    RichText::new(&preset.hotkey_label)
+                        .monospace()
+                        .color(Color32::from_gray(190)),
+                );
                 let text = self
                     .label_edits
                     .entry(preset.name.clone())
@@ -548,7 +591,11 @@ impl App {
                     });
                 }
                 if is_active {
-                    ui.label(RichText::new("ACTIVE").color(Color32::from_rgb(90, 200, 120)).strong());
+                    ui.label(
+                        RichText::new("ACTIVE")
+                            .color(Color32::from_rgb(90, 200, 120))
+                            .strong(),
+                    );
                 }
             });
 
@@ -577,7 +624,11 @@ impl App {
                         if let Some(entry) = id.as_deref().and_then(|id| self.catalog.get(id)) {
                             ui.label(RichText::new(entry.arrows()).monospace().small());
                         } else {
-                            ui.label(RichText::new("not identified").small().color(tone_color(Tone::Warning)));
+                            ui.label(
+                                RichText::new("not identified")
+                                    .small()
+                                    .color(tone_color(Tone::Warning)),
+                            );
                         }
                         let preset_name = preset.name.clone();
                         let preset_index = preset.index;
@@ -600,13 +651,20 @@ impl App {
                     (true, false) => "Booster",
                     _ => "No booster",
                 };
-                ui.label(RichText::new(booster).small().color(Color32::from_gray(170)));
+                ui.label(
+                    RichText::new(booster)
+                        .small()
+                        .color(Color32::from_gray(170)),
+                );
                 if let Some(problem) = &preset.problem {
                     ui.colored_label(tone_color(Tone::Error), problem);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.pending_delete.as_deref() == Some(preset.name.as_str()) {
-                        if ui.button(RichText::new("Confirm delete").color(tone_color(Tone::Error))).clicked() {
+                        if ui
+                            .button(RichText::new("Confirm delete").color(tone_color(Tone::Error)))
+                            .clicked()
+                        {
                             self.handle.send(UiCommand::DeletePreset {
                                 preset: preset.name.clone(),
                             });
@@ -618,12 +676,23 @@ impl App {
                     } else if ui.button("Delete").clicked() {
                         self.pending_delete = Some(preset.name.clone());
                     }
-                    if !is_active && ui.button("Set as active").on_hover_text("Use this preset for the slot hotkeys without touching the game").clicked() {
+                    if !is_active
+                        && ui
+                            .button("Set as active")
+                            .on_hover_text(
+                                "Use this preset for the slot hotkeys without touching the game",
+                            )
+                            .clicked()
+                    {
                         self.handle.send(UiCommand::SetActiveFromPreset {
                             preset: preset.name.clone(),
                         });
                     }
-                    if ui.button("Identify").on_hover_text("Re-run stratagem identification on the captured icons").clicked() {
+                    if ui
+                        .button("Identify")
+                        .on_hover_text("Re-run stratagem identification on the captured icons")
+                        .clicked()
+                    {
                         self.handle.send(UiCommand::IdentifyPreset {
                             preset: preset.name.clone(),
                         });
@@ -650,7 +719,10 @@ impl App {
             .labels
             .get(&active.preset)
             .filter(|label| !label.trim().is_empty())
-            .map_or_else(|| active.preset.clone(), |label| format!("{} ({label})", active.preset));
+            .map_or_else(
+                || active.preset.clone(),
+                |label| format!("{} ({label})", active.preset),
+            );
         ui.horizontal(|ui| {
             ui.label(format!(
                 "{label} · {} · {}",
@@ -681,7 +753,10 @@ impl App {
                                 ui.label(RichText::new(entry.arrows()).monospace().size(18.0));
                             }
                             None => {
-                                ui.label(RichText::new("Not identified").color(tone_color(Tone::Warning)));
+                                ui.label(
+                                    RichText::new("Not identified")
+                                        .color(tone_color(Tone::Warning)),
+                                );
                                 ui.label(RichText::new("pick below").small());
                             }
                         }
@@ -696,7 +771,10 @@ impl App {
             }
         });
         if !snapshot.settings.mission_enabled {
-            ui.colored_label(tone_color(Tone::Warning), "Mission hotkeys are disabled in settings.");
+            ui.colored_label(
+                tone_color(Tone::Warning),
+                "Mission hotkeys are disabled in settings.",
+            );
         } else if !snapshot.game_foreground {
             ui.label(
                 RichText::new("Slot hotkeys arm automatically while Helldivers 2 is focused.")
@@ -967,9 +1045,11 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.toggle_value(&mut self.show_log, "Activity log");
                     ui.label(
-                        RichText::new("Closing the window keeps the tool running; exit from the tray icon.")
-                            .small()
-                            .color(Color32::from_gray(150)),
+                        RichText::new(
+                            "Closing the window keeps the tool running; exit from the tray icon.",
+                        )
+                        .small()
+                        .color(Color32::from_gray(150)),
                     );
                 });
                 if !self.show_log {
@@ -1014,7 +1094,8 @@ impl eframe::App for App {
             return;
         }
         if show_window_requested {
-            self.handle.update(|state| state.show_window_requested = false);
+            self.handle
+                .update(|state| state.show_window_requested = false);
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);

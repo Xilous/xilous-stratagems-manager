@@ -212,11 +212,7 @@ pub fn save_captured_preset(path: &Path, name: &str, captured: &CapturedPreset) 
 }
 
 /// Records the identified catalog ids for all four stratagem slots of a preset.
-pub fn set_preset_stratagems(
-    path: &Path,
-    name: &str,
-    ids: &[Option<String>; 4],
-) -> Result<Preset> {
+pub fn set_preset_stratagems(path: &Path, name: &str, ids: &[Option<String>; 4]) -> Result<Preset> {
     let mut presets = load_preset_file(path)?;
     let preset = presets
         .presets
