@@ -413,7 +413,7 @@ impl WgcCapture {
         let generation_after_read = self.frame_bus.generation();
         let newer_frame_published = generation_after_read > generation;
         debug!(
-            target: "hd2_preset_helper::perf",
+            target: "xilous_stratagems_manager::perf",
             generation,
             wait = ?wait_elapsed,
             age = ?frame_age,
@@ -686,7 +686,7 @@ fn read_d3d11_texture_region_to_rgba_cached(
 
     let total = t0.elapsed();
     debug!(
-        target: "hd2_preset_helper::perf",
+        target: "xilous_stratagems_manager::perf",
         total = ?total,
         staging = ?t_staging,
         mapping = ?t_map,

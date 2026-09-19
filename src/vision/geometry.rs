@@ -273,7 +273,7 @@ pub fn detect(
         SlotLayout::List(item_kind) => detect_list(screenshot, geometry, item_kind),
     };
     debug!(
-        target: "hd2_preset_helper::perf",
+        target: "xilous_stratagems_manager::perf",
         ?expected_layout,
         total = ?started.elapsed(),
         detections = slots.len(),

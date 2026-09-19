@@ -14,7 +14,7 @@ const GAME_PROCESS_NAME: &str = "helldivers2.exe";
 
 pub(super) fn ensure_input_access() -> Result<()> {
     let helper_is_elevated = process_is_elevated(unsafe { GetCurrentProcess() })
-        .context("failed to inspect HD2 Preset Helper permissions")?;
+        .context("failed to inspect Xilous Stratagems Manager permissions")?;
     if helper_is_elevated {
         return Ok(());
     }
@@ -27,7 +27,7 @@ pub(super) fn ensure_input_access() -> Result<()> {
 
     if process_is_elevated(process.0).context("failed to inspect Helldivers permissions")? {
         bail!(
-            "Helldivers is running with higher privileges. Restart HD2 Preset Helper as administrator, or run the game normally."
+            "Helldivers is running with higher privileges. Restart Xilous Stratagems Manager as administrator, or run the game normally."
         );
     }
 

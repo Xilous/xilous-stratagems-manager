@@ -42,11 +42,11 @@ jobs:
             ConvertFrom-Json
 
           $package = $metadata.packages |
-            Where-Object { $_.name -eq "hd2-preset-helper" } |
+            Where-Object { $_.name -eq "xilous-stratagems-manager" } |
             Select-Object -First 1
 
           if (-not $package) {
-            throw "Package hd2-preset-helper was not found"
+            throw "Package xilous-stratagems-manager was not found"
           }
 
           # Require the tag to match the Cargo package version.
@@ -58,9 +58,9 @@ jobs:
 
           cargo build --release --locked
 
-          $exe = "target\release\HD2PresetHelper.exe"
-          $packageDir = "dist\package\HD2PresetHelper"
-          $zipName = "HD2PresetHelper-$expectedTag-windows-x64.zip"
+          $exe = "target\release\XilousStratagemsManager.exe"
+          $packageDir = "dist\package\XilousStratagemsManager"
+          $zipName = "XilousStratagemsManager-$expectedTag-windows-x64.zip"
           $zipPath = "dist\$zipName"
 
           if (-not (Test-Path $exe)) {
@@ -75,14 +75,14 @@ jobs:
 
           Copy-Item `
             -Path $exe `
-            -Destination "$packageDir\HD2PresetHelper.exe"
+            -Destination "$packageDir\XilousStratagemsManager.exe"
 
           Copy-Item `
             -Path "LICENSE" `
             -Destination $packageDir
 
           # Compress the directory itself so the ZIP contains one top-level
-          # HD2PresetHelper folder.
+          # XilousStratagemsManager folder.
           Compress-Archive `
             -Path $packageDir `
             -DestinationPath $zipPath `
@@ -94,7 +94,7 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: |
-            dist/package/HD2PresetHelper/HD2PresetHelper.exe
+            dist/package/XilousStratagemsManager/XilousStratagemsManager.exe
             dist/*.zip
 
       - name: Publish release
@@ -107,7 +107,7 @@ jobs:
             "dist\$env:ZIP_NAME",
             "--verify-tag",
             "--generate-notes",
-            "--title", "HD2 Preset Helper $env:GITHUB_REF_NAME"
+            "--title", "Xilous Stratagems Manager $env:GITHUB_REF_NAME"
           )
 
           if ($env:GITHUB_REF_NAME -match "-") {

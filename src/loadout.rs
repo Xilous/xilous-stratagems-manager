@@ -157,7 +157,7 @@ fn wait_for_stable_ui_state(
             {
                 if distance <= stable_distance {
                     debug!(
-                        target: "hd2_preset_helper::perf",
+                        target: "xilous_stratagems_manager::perf",
                         attempt,
                         slot_count = result.slots.len(),
                         distance,

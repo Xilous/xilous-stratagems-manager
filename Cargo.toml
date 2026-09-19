@@ -1,23 +1,22 @@
 [package]
-name = "hd2-preset-helper"
+name = "xilous-stratagems-manager"
 version = "0.2.0"
 edition = "2024"
 build = "build.rs"
 description = "A Windows utility for saving and applying Stratagem and Booster presets from the Helldivers 2 loadout screen"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/xmg228/hd2-preset-helper"
 readme = "README.md"
 
 [package.metadata.winresource]
-ProductName = "HD2 Preset Helper"
-FileDescription = "HD2 Preset Helper"
-OriginalFilename = "HD2PresetHelper.exe"
+ProductName = "Xilous Stratagems Manager"
+FileDescription = "Xilous Stratagems Manager"
+OriginalFilename = "XilousStratagemsManager.exe"
 
 [features]
 diagnostics = []
 
 [[bin]]
-name = "HD2PresetHelper"
+name = "XilousStratagemsManager"
 path = "src/main.rs"
 
 [dependencies]

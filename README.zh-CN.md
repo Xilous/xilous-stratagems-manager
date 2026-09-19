@@ -1,8 +1,8 @@
-# HD2 Preset Helper
+# Xilous Stratagems Manager
 
 [English](README.md) | **简体中文**
 
-HD2 Preset Helper 是一款适用于《绝地潜兵 2》的 Windows 配装预设工具。它可以直接在游戏的配装界面保存四个战略配备和一个可选强化，并通过快捷键快速应用已经保存的预设。
+Xilous Stratagems Manager 是一款适用于《绝地潜兵 2》的 Windows 配装预设工具。它可以直接在游戏的配装界面保存四个战略配备和一个可选强化，并通过快捷键快速应用已经保存的预设。
 
 程序通过屏幕捕获识别游戏界面，再模拟正常的鼠标和键盘操作完成选择。它不会修改游戏文件、向游戏进程注入代码、读取游戏内存或更改网络流量。程序没有联网功能，所有识别和操作均在本地完成。
 
@@ -10,13 +10,13 @@ HD2 Preset Helper 是一款适用于《绝地潜兵 2》的 Windows 配装预设
 
 1. 前往 [GitHub Releases](../../releases/latest) 下载最新版本的 ZIP 压缩包。
 2. 将压缩包完整解压到一个单独且具有写入权限的文件夹中。
-3. 运行 `HD2PresetHelper.exe`。
+3. 运行 `XilousStratagemsManager.exe`。
 
 程序启动后会驻留在系统托盘中。右键单击托盘图标可以切换可选行为，或选择 **Exit** 退出。
 
-更新时，将新的 `HD2PresetHelper` 文件夹覆盖到原文件夹即可。设置会被保留；如果新版本更改了预设格式，程序会备份旧预设文件并提示重新创建预设。
+更新时，将新的 `XilousStratagemsManager` 文件夹覆盖到原文件夹即可。设置会被保留；如果新版本更改了预设格式，程序会备份旧预设文件并提示重新创建预设。
 
-如需卸载，请先退出程序，然后删除解压出的 `HD2PresetHelper` 文件夹。配置、预设和日志也会随之删除。
+如需卸载，请先退出程序，然后删除解压出的 `XilousStratagemsManager` 文件夹。配置、预设和日志也会随之删除。
 
 ## 快速开始
 
@@ -97,11 +97,11 @@ cargo build --release --locked
 生成的可执行文件位于：
 
 ```text
-target\release\HD2PresetHelper.exe
+target\release\XilousStratagemsManager.exe
 ```
 
 ## 法律声明
 
-HD2 Preset Helper 是非官方第三方工具，与 Arrowhead Game Studios 或 Sony Interactive Entertainment 没有从属关系，也未获得其认可或背书。
+Xilous Stratagems Manager 是非官方第三方工具，与 Arrowhead Game Studios 或 Sony Interactive Entertainment 没有从属关系，也未获得其认可或背书。
 
 本项目的源代码采用 [GNU General Public License version 3 or later](LICENSE) 许可。

@@ -1,8 +1,8 @@
-# HD2 Preset Helper
+# Xilous Stratagems Manager
 
 **English** | [简体中文](README.zh-CN.md)
 
-HD2 Preset Helper is a lightweight Windows utility for saving and applying loadout presets in Helldivers 2. Each preset can include four Stratagems and an optional Booster, and can be activated with a configurable global hotkey.
+Xilous Stratagems Manager is a lightweight Windows utility for saving and applying loadout presets in Helldivers 2. Each preset can include four Stratagems and an optional Booster, and can be activated with a configurable global hotkey.
 
 The program recognizes the game interface through screen capture and completes selections using standard mouse and keyboard input. It does not modify game files, inject code into the game process, read game memory, or alter network traffic.
 
@@ -10,9 +10,9 @@ The program recognizes the game interface through screen capture and completes s
 
 1. Download the latest ZIP from [GitHub Releases](../../releases/latest).
 2. Extract it to a separate writable folder.
-3. Run `HD2PresetHelper.exe`.
+3. Run `XilousStratagemsManager.exe`.
 
-To update, extract the new `HD2PresetHelper` folder over the existing folder.
+To update, extract the new `XilousStratagemsManager` folder over the existing folder.
 Settings are preserved. If a release changes the preset format, the app backs
 up the old preset file and asks you to recreate the presets.
 
@@ -20,7 +20,7 @@ The application runs in the system tray. Right-click its tray icon to change
 optional behavior or select **Exit** to close it.
 
 To uninstall, exit the application and delete the extracted
-`HD2PresetHelper` folder. This also removes its configuration, presets, and
+`XilousStratagemsManager` folder. This also removes its configuration, presets, and
 logs.
 
 ## Quick start
@@ -101,7 +101,7 @@ install a current stable Rust toolchain and run:
 cargo build --release --locked
 ```
 
-The executable is written to `target\release\HD2PresetHelper.exe`.
+The executable is written to `target\release\XilousStratagemsManager.exe`.
 
 ## Legal
 
@@ -110,3 +110,7 @@ endorsed by Arrowhead Game Studios or Sony Interactive Entertainment.
 
 The source code is licensed under the
 [GNU General Public License version 3 or later](LICENSE).
+
+Xilous Stratagems Manager is a modified fork of
+[HD2 Preset Helper](https://github.com/xmg228/hd2-preset-helper) by xmg228,
+used under the terms of the GPL. Changes have been made to the original work.

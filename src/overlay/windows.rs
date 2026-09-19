@@ -42,7 +42,7 @@ use crate::assets;
 use crate::input::HotkeyModifiers;
 use crate::preset::load_template_image;
 
-const OVERLAY_CLASS: &str = "hd2-preset-helper-overlay";
+const OVERLAY_CLASS: &str = "xilous-stratagems-manager-overlay";
 const APP_EVENT_MESSAGE: u32 = WM_APP + 1;
 const BASE_SCREEN_MARGIN: i32 = 24;
 const BASE_WINDOW_W: i32 = 224;
@@ -383,7 +383,7 @@ pub(super) fn start(modifiers: HotkeyModifiers, presets_path: &Path) -> Result<A
     let presets_path = presets_path.to_path_buf();
 
     thread::Builder::new()
-        .name("hd2-preset-helper-overlay".to_string())
+        .name("xilous-stratagems-manager-overlay".to_string())
         .spawn(move || {
             if let Err(error) = run_overlay(receiver, modifiers, presets_path, &overlay_wake_thread)
             {
@@ -415,7 +415,7 @@ fn run_overlay(
     let initial_position = overlay_position(initial_metrics);
 
     let class_name = wide_null(OVERLAY_CLASS);
-    let window_title = wide_null("HD2 Preset Helper");
+    let window_title = wide_null("Xilous Stratagems Manager");
 
     unsafe {
         let window_class = WNDCLASSW {
@@ -933,7 +933,7 @@ fn paint_overlay(hwnd: HWND) {
             SetTextColor(hdc, rgb(236, 242, 248));
             draw_text_line(
                 hdc,
-                "HD2 Preset Helper",
+                "Xilous Stratagems Manager",
                 state.metrics.padding,
                 state.metrics.title_y,
                 state.metrics.window_w - state.metrics.padding * 2,

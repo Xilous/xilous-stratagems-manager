@@ -188,7 +188,7 @@ impl TemplateClassifier {
             .collect::<Result<Vec<_>>>()?;
 
         debug!(
-            target: "hd2_preset_helper::perf",
+            target: "xilous_stratagems_manager::perf",
             item_kind = %item_kind.label(),
             templates = prepared.len(),
             current_ui_scale,
@@ -270,7 +270,7 @@ impl TemplateClassifier {
         super::diagnostics::record_frame(results.iter().map(|result| &result.diagnostics))?;
 
         debug!(
-            target: "hd2_preset_helper::perf",
+            target: "xilous_stratagems_manager::perf",
             algorithm = "template_matcher",
             slots = results.len(),
             templates = self.templates.len(),
@@ -417,7 +417,7 @@ fn trace_match(
     extraction: &SemanticExtraction,
 ) {
     trace!(
-        target: "hd2_preset_helper::template",
+        target: "xilous_stratagems_manager::template",
         algorithm = "template_matcher",
         item_id,
         category = category.map(StratagemCategory::label),

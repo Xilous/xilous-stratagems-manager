@@ -259,7 +259,7 @@ fn send_single_input(input: INPUT, description: &str) -> Result<()> {
     let sent = unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
     if sent != 1 {
         bail!(
-            "Windows did not accept {description} (sent={sent}). If Helldivers is running as administrator, run HD2 Preset Helper as administrator too."
+            "Windows did not accept {description} (sent={sent}). If Helldivers is running as administrator, run Xilous Stratagems Manager as administrator too."
         );
     }
     Ok(())

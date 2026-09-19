@@ -645,7 +645,7 @@ fn init_tracing(path: &Path) -> Result<WorkerGuard> {
         .with_filter(
             Targets::new()
                 .with_target(module_path!(), level)
-                .with_target("hd2_preset_helper", level),
+                .with_target("xilous_stratagems_manager", level),
         );
 
     tracing_subscriber::registry().with(file_layer).init();
@@ -666,9 +666,9 @@ fn show_fatal_error(error: &anyhow::Error) {
         },
     );
     let message = format!(
-        "HD2 Preset Helper could not start or encountered a fatal error.\r\n\r\n{error}{log_hint}"
+        "Xilous Stratagems Manager could not start or encountered a fatal error.\r\n\r\n{error}{log_hint}"
     );
-    let title = wide_null("HD2 Preset Helper");
+    let title = wide_null("Xilous Stratagems Manager");
     let message = wide_null(&message);
 
     unsafe {
@@ -687,7 +687,7 @@ fn show_config_reset(config_path: &Path, presets_path: &Path) {
         presets_path.display(),
         config_path.display(),
     );
-    let title = wide_null("HD2 Preset Helper - Configuration Updated");
+    let title = wide_null("Xilous Stratagems Manager - Configuration Updated");
     let message = wide_null(&message);
 
     unsafe {
@@ -705,7 +705,7 @@ fn show_preset_format_updated(backup_path: &Path) {
         "The preset format changed in this version.\r\n\r\nPresets created by an earlier version cannot be used and must be recreated in game.\r\n\r\nThe old preset file was backed up to:\r\n{}\r\n\r\nYour configuration was not changed.",
         backup_path.display(),
     );
-    let title = wide_null("HD2 Preset Helper - Presets Updated");
+    let title = wide_null("Xilous Stratagems Manager - Presets Updated");
     let message = wide_null(&message);
 
     unsafe {

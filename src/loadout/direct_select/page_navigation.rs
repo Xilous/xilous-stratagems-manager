@@ -181,7 +181,7 @@ impl PageNavigator {
                 PageRelation::Shifted(shift) => {
                     let short = shift.shift_ratio < PAGE_TURN_SHORT_THRESHOLD_RATIO;
                     debug!(
-                        target: "hd2_preset_helper::perf",
+                        target: "xilous_stratagems_manager::perf",
                         directed_shift = shift.directed_shift,
                         shift_ratio = shift.shift_ratio,
                         short_threshold_ratio = PAGE_TURN_SHORT_THRESHOLD_RATIO,
@@ -196,7 +196,7 @@ impl PageNavigator {
                 }
                 relation @ (PageRelation::DifferentViewport | PageRelation::Uncertain) => {
                     debug!(
-                        target: "hd2_preset_helper::perf",
+                        target: "xilous_stratagems_manager::perf",
                         ?relation,
                         distance,
                         "page turn completed from changed frame"
@@ -212,7 +212,7 @@ impl PageNavigator {
                     same_viewport_frames += 1;
                     if no_movement_check && same_viewport_frames >= PAGE_TURN_NO_MOVEMENT_FRAMES {
                         debug!(
-                            target: "hd2_preset_helper::perf",
+                            target: "xilous_stratagems_manager::perf",
                             elapsed = ?start.elapsed(),
                             same_viewport_frames,
                             "page turn produced no movement"

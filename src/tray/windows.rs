@@ -32,7 +32,7 @@ impl WindowsTray {
     pub(super) fn spawn(settings: TraySettings, event_tx: Sender<TrayEvent>) -> Result<Self> {
         let (ready_tx, ready_rx) = sync_channel(1);
         let thread = std::thread::Builder::new()
-            .name("hd2-preset-helper-tray".to_string())
+            .name("xilous-stratagems-manager-tray".to_string())
             .spawn(move || {
                 let tray_thread_id = unsafe { GetCurrentThreadId() };
                 let result = run_tray(tray_thread_id, &ready_tx, settings, event_tx);
@@ -96,7 +96,7 @@ fn run_tray(
     .context("failed to create tray menu")?;
     let icon = tray_icon()?;
     let _tray = TrayIconBuilder::new()
-        .with_tooltip("HD2 Preset Helper")
+        .with_tooltip("Xilous Stratagems Manager")
         .with_icon(icon)
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
