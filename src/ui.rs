@@ -69,6 +69,31 @@ struct Snapshot {
     exit_requested: bool,
 }
 
+/// Which slot the stratagem selector is editing.
+#[derive(Clone)]
+enum PickerKind {
+    PresetSlot { preset: String, slot: usize },
+    ActiveSlot { slot: usize },
+}
+
+#[derive(Clone)]
+struct PickerTarget {
+    kind: PickerKind,
+    current: Option<String>,
+    title: String,
+}
+
+/// Display order of stratagem types inside each permit group.
+const KIND_ORDER: [&str; 7] = [
+    "Orbital",
+    "Eagle",
+    "Support Weapon",
+    "Backpack",
+    "Vehicle",
+    "Sentry",
+    "Emplacement",
+];
+
 struct App {
     handle: AppHandle,
     catalog: Arc<Catalog>,
@@ -79,6 +104,9 @@ struct App {
     pending_delete: Option<String>,
     input_draft: Option<StratagemInputSettings>,
     show_log: bool,
+    picker: Option<PickerTarget>,
+    picker_search: String,
+    picker_focus_search: bool,
 }
 
 impl App {
@@ -105,6 +133,9 @@ impl App {
             pending_delete: None,
             input_draft: None,
             show_log: true,
+            picker: None,
+            picker_search: String::new(),
+            picker_focus_search: false,
         }
     }
 
@@ -164,47 +195,211 @@ impl App {
         }
     }
 
-    /// Dropdown over the loadout stratagems. Returns `Some(new value)` on change.
-    fn stratagem_picker(
-        &self,
+    /// Button showing the slot's stratagem; clicking opens the visual selector.
+    fn open_picker_button(
+        &mut self,
         ui: &mut egui::Ui,
-        salt: &str,
         current: Option<&str>,
         width: f32,
-    ) -> Option<Option<String>> {
-        let selected_text = current.map_or_else(|| "Unknown".to_string(), |id| self.catalog.name_of(id));
-        let mut changed = None;
-        egui::ComboBox::from_id_salt(salt)
-            .selected_text(selected_text)
-            .width(width)
-            .show_ui(ui, |ui| {
-                if ui.selectable_label(current.is_none(), "Unknown").clicked() {
-                    changed = Some(None);
-                }
-                for category in [
-                    StratagemCategory::Offensive,
-                    StratagemCategory::Supply,
-                    StratagemCategory::Defensive,
-                ] {
-                    ui.separator();
-                    ui.label(RichText::new(category_title(category)).small().strong());
-                    for entry in self
-                        .catalog
-                        .loadout_entries()
-                        .filter(|entry| entry.category() == Some(category))
-                    {
-                        let selected = current == Some(entry.id.as_str());
-                        if ui
-                            .selectable_label(selected, &entry.name)
-                            .on_hover_text(RichText::new(entry_details(entry)).monospace())
-                            .clicked()
-                        {
-                            changed = Some(Some(entry.id.clone()));
-                        }
-                    }
-                }
+        target: impl FnOnce() -> (PickerKind, String),
+    ) {
+        let text = current.map_or_else(|| "Unknown".to_string(), |id| self.catalog.name_of(id));
+        let button = egui::Button::new(RichText::new(text).small())
+            .min_size(Vec2::new(width, 22.0))
+            .wrap();
+        if ui
+            .add(button)
+            .on_hover_text("Choose the stratagem for this slot")
+            .clicked()
+        {
+            let (kind, title) = target();
+            self.picker = Some(PickerTarget {
+                kind,
+                current: current.map(str::to_string),
+                title,
             });
-        changed
+            self.picker_search.clear();
+            self.picker_focus_search = true;
+        }
+    }
+
+    /// One selectable icon tile in the selector. Returns `true` when clicked.
+    fn stratagem_tile(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: Option<&str>,
+        name: &str,
+        details: Option<String>,
+        selected: bool,
+    ) -> bool {
+        const TILE: Vec2 = Vec2::new(112.0, 104.0);
+        let tile_id = ui.id().with(("stratagem-tile", id.unwrap_or("unknown")));
+        let hovered = ui
+            .ctx()
+            .read_response(tile_id)
+            .is_some_and(|response| response.hovered());
+        let fill = if selected {
+            Color32::from_rgb(38, 92, 58)
+        } else if hovered {
+            Color32::from_gray(66)
+        } else {
+            Color32::from_gray(46)
+        };
+        let stroke = if selected {
+            egui::Stroke::new(1.5, Color32::from_rgb(90, 200, 120))
+        } else {
+            egui::Stroke::NONE
+        };
+        let frame = egui::Frame::new()
+            .fill(fill)
+            .stroke(stroke)
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::same(6))
+            .show(ui, |ui| {
+                ui.set_min_size(TILE);
+                ui.set_max_width(TILE.x);
+                ui.vertical_centered(|ui| {
+                    self.show_icon(ui, id, 52);
+                    ui.add(egui::Label::new(RichText::new(name).small()).wrap());
+                });
+            });
+        let response = ui.interact(frame.response.rect, tile_id, egui::Sense::click());
+        let response = match details {
+            Some(details) => response.on_hover_text(RichText::new(details).monospace()),
+            None => response,
+        };
+        response.clicked()
+    }
+
+    /// The stratagem selector window, shown while a slot is being edited.
+    fn picker_window(&mut self, ctx: &egui::Context) {
+        let Some(target) = self.picker.clone() else {
+            return;
+        };
+        if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.picker = None;
+            return;
+        }
+
+        let entries: Vec<StratagemEntry> = self.catalog.loadout_entries().cloned().collect();
+        let mut open = true;
+        let mut chosen: Option<Option<String>> = None;
+        egui::Window::new(format!("Choose a stratagem — {}", target.title))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size([820.0, 640.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Search");
+                    let search = ui.add(
+                        egui::TextEdit::singleline(&mut self.picker_search)
+                            .hint_text("name or type")
+                            .desired_width(240.0),
+                    );
+                    if self.picker_focus_search {
+                        search.request_focus();
+                        self.picker_focus_search = false;
+                    }
+                    if ui.button("Clear").clicked() {
+                        self.picker_search.clear();
+                    }
+                    ui.label(
+                        RichText::new("Click a tile to assign it. Esc closes.")
+                            .small()
+                            .color(Color32::from_gray(160)),
+                    );
+                });
+                ui.separator();
+
+                let query = self.picker_search.trim().to_ascii_lowercase();
+                let matches = |entry: &StratagemEntry| {
+                    query.is_empty()
+                        || entry.name.to_ascii_lowercase().contains(&query)
+                        || entry.kind.to_ascii_lowercase().contains(&query)
+                };
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if query.is_empty() {
+                            ui.horizontal_wrapped(|ui| {
+                                if self.stratagem_tile(ui, None, "Unknown", None, target.current.is_none()) {
+                                    chosen = Some(None);
+                                }
+                            });
+                        }
+                        for category in [
+                            StratagemCategory::Offensive,
+                            StratagemCategory::Supply,
+                            StratagemCategory::Defensive,
+                        ] {
+                            let kinds = KIND_ORDER
+                                .iter()
+                                .map(|kind| kind.to_string())
+                                .chain(std::iter::once(String::new()));
+                            for kind in kinds {
+                                let group: Vec<&StratagemEntry> = entries
+                                    .iter()
+                                    .filter(|entry| entry.category() == Some(category))
+                                    .filter(|entry| {
+                                        if kind.is_empty() {
+                                            !KIND_ORDER
+                                                .iter()
+                                                .any(|known| known.eq_ignore_ascii_case(&entry.kind))
+                                        } else {
+                                            entry.kind.eq_ignore_ascii_case(&kind)
+                                        }
+                                    })
+                                    .filter(|entry| matches(entry))
+                                    .collect();
+                                if group.is_empty() {
+                                    continue;
+                                }
+                                let heading = if kind.is_empty() {
+                                    category_title(category).to_string()
+                                } else {
+                                    format!("{} · {kind}", category_title(category))
+                                };
+                                ui.add_space(6.0);
+                                ui.label(RichText::new(heading).strong());
+                                ui.horizontal_wrapped(|ui| {
+                                    for entry in group {
+                                        let selected =
+                                            target.current.as_deref() == Some(entry.id.as_str());
+                                        if self.stratagem_tile(
+                                            ui,
+                                            Some(&entry.id),
+                                            &entry.name,
+                                            Some(entry_details(entry)),
+                                            selected,
+                                        ) {
+                                            chosen = Some(Some(entry.id.clone()));
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    });
+            });
+
+        if let Some(choice) = chosen {
+            match target.kind {
+                PickerKind::PresetSlot { preset, slot } => {
+                    self.handle.send(UiCommand::SetPresetStratagem {
+                        preset,
+                        slot,
+                        id: choice,
+                    });
+                }
+                PickerKind::ActiveSlot { slot } => {
+                    self.handle.send(UiCommand::SetActiveSlot { slot, id: choice });
+                }
+            }
+            self.picker = None;
+        } else if !open {
+            self.picker = None;
+        }
     }
 
     /// Key dropdown plus modifier toggles. Returns `Some(new binding)` on change.
@@ -384,18 +579,17 @@ impl App {
                         } else {
                             ui.label(RichText::new("not identified").small().color(tone_color(Tone::Warning)));
                         }
-                        if let Some(change) = self.stratagem_picker(
-                            ui,
-                            &format!("{}-slot-{slot}", preset.name),
-                            id.as_deref(),
-                            112.0,
-                        ) {
-                            self.handle.send(UiCommand::SetPresetStratagem {
-                                preset: preset.name.clone(),
-                                slot,
-                                id: change,
-                            });
-                        }
+                        let preset_name = preset.name.clone();
+                        let preset_index = preset.index;
+                        self.open_picker_button(ui, id.as_deref(), 112.0, move || {
+                            (
+                                PickerKind::PresetSlot {
+                                    preset: preset_name,
+                                    slot,
+                                },
+                                format!("Preset {} slot {}", preset_index + 1, slot + 1),
+                            )
+                        });
                     });
                 }
             });
@@ -491,11 +685,12 @@ impl App {
                                 ui.label(RichText::new("pick below").small());
                             }
                         }
-                        if let Some(change) =
-                            self.stratagem_picker(ui, &format!("active-slot-{slot}"), id.as_deref(), 140.0)
-                        {
-                            self.handle.send(UiCommand::SetActiveSlot { slot, id: change });
-                        }
+                        self.open_picker_button(ui, id.as_deref(), 140.0, move || {
+                            (
+                                PickerKind::ActiveSlot { slot },
+                                format!("active loadout slot {}", slot + 1),
+                            )
+                        });
                     });
                 });
             }
@@ -838,6 +1033,8 @@ impl eframe::App for App {
             return;
         }
 
+        let ctx = root.ctx().clone();
+        self.picker_window(&ctx);
         self.top_panel(root, &snapshot);
         self.log_panel(root);
         self.presets_panel(root, &snapshot);

@@ -35,11 +35,14 @@ const FRAME_FRACTION: f32 = 0.065;
 /// Loadout tile background in game; matches the extractor's fixed background.
 const TILE_BACKGROUND: u8 = 44;
 /// Best score at or below this is a plausible match (lower is better).
-/// Real captures score 0.06 (sentries) to 0.55 (support weapons).
+/// Real captures score 0.06 (sentries) to 0.66 (Guard Dog variants).
 pub const ACCEPT_SCORE: f64 = 0.75;
-/// The runner-up must trail by at least this much for an unambiguous match.
-/// The tightest real case observed was 0.19.
-pub const ACCEPT_MARGIN: f64 = 0.08;
+/// The runner-up must trail the best by at least this fraction of the best
+/// score. Families that share artwork (the Guard Dogs) separate by about 11%;
+/// everything else by far more.
+pub const ACCEPT_MARGIN_RELATIVE: f64 = 0.10;
+/// ...and by at least this much in absolute terms.
+pub const ACCEPT_MARGIN: f64 = 0.05;
 
 struct Reference {
     id: String,
@@ -214,7 +217,11 @@ impl CatalogIdentifier {
         };
         let accepted = ranked
             .first()
-            .filter(|best| best.score <= ACCEPT_SCORE && margin >= ACCEPT_MARGIN)
+            .filter(|best| {
+                best.score <= ACCEPT_SCORE
+                    && margin >= ACCEPT_MARGIN
+                    && margin >= ACCEPT_MARGIN_RELATIVE * best.score
+            })
             .map(|best| best.id.clone());
 
         debug!(
@@ -381,11 +388,14 @@ impl CatalogIdentifier {
 mod tests {
     use super::*;
 
+    /// Loadout-screen crops captured at 1080p by the tool itself, committed as
+    /// fixtures. Override with XSM_TEMPLATE_DIR / XSM_TEMPLATE_IDS to test
+    /// other captures (e.g. `data/local_templates/preset_2`).
     fn real_capture_samples() -> Vec<(String, ImageSample)> {
         let dir = std::env::var("XSM_TEMPLATE_DIR")
-            .unwrap_or_else(|_| "target/release/data/local_templates/preset_1".to_string());
+            .unwrap_or_else(|_| "tests/fixtures/loadout-1080p".to_string());
         let ids = std::env::var("XSM_TEMPLATE_IDS").unwrap_or_else(|_| {
-            "a-mg-43-machine-gun-sentry,a-g-16-gatling-sentry,faf-14-spear,gr-8-recoilless-rifle"
+            "a-mg-43-machine-gun-sentry,a-g-16-gatling-sentry,las-99-quasar-cannon,ax-tx-13-dog-breath"
                 .to_string()
         });
         let mut samples = Vec::new();
@@ -413,7 +423,6 @@ mod tests {
 
     /// Real loadout-screen captures must be accepted through the public path.
     #[test]
-    #[ignore = "needs real captures under target/release/data/local_templates"]
     fn real_captures_are_identified() {
         let samples = real_capture_samples();
         if samples.is_empty() {
@@ -423,15 +432,35 @@ mod tests {
         let identifier = CatalogIdentifier::from_catalog(&catalog).expect("identifier");
         for (id, sample) in &samples {
             let identification = identifier.identify(sample, None).expect("identify");
+            let top = identification
+                .ranked
+                .iter()
+                .take(4)
+                .map(|candidate| format!("{}={:.3}", candidate.id, candidate.score))
+                .collect::<Vec<_>>()
+                .join("  ");
             eprintln!(
-                "{id}: accepted={:?} best={:?} score={:?} margin={:.3}",
-                identification.accepted,
-                identification.best().map(|best| best.id.as_str()),
-                identification.best().map(|best| best.score),
-                identification.margin
+                "{id}: accepted={:?} margin={:.3}  top: {top}",
+                identification.accepted, identification.margin
             );
             assert_eq!(identification.accepted.as_deref(), Some(id.as_str()));
         }
+    }
+
+    /// Writes the border-masked reference render of XSM_DUMP_ID next to the
+    /// fixtures, to compare wiki artwork with a capture by eye.
+    #[test]
+    #[ignore = "diagnostic; set XSM_DUMP_ID"]
+    fn dump_reference_icon() {
+        let Ok(id) = std::env::var("XSM_DUMP_ID") else {
+            return;
+        };
+        let catalog = Catalog::load().expect("catalog");
+        let mut image = catalog.render_icon(&id, 70).expect("render");
+        mask_frame(&mut image);
+        let path = format!("target/reference-{id}.png");
+        image.save(&path).expect("save");
+        eprintln!("wrote {path}");
     }
 
     /// Prints how real loadout-screen captures score against their catalog
