@@ -30,7 +30,9 @@ use crate::input::{
 };
 use crate::loadout::{UiState, bind_loadout_region, collect_current_preset};
 use crate::permissions;
-use crate::preset::{self, invalid_preset_reason, load_presets, validate_preset};
+use crate::preset::{
+    self, Preset, invalid_preset_reason, load_presets, load_template_sample, validate_preset,
+};
 use crate::preset_action::{
     PresetActionConfig, PresetActionOutcome, handle_preset_hotkey, quick_ui_state,
 };
@@ -81,6 +83,7 @@ pub fn spawn(context: EngineContext) -> Result<JoinHandle<()>> {
 fn run(context: EngineContext) -> Result<()> {
     let mut engine = Engine::new(context)?;
     engine.publish_all();
+    engine.identify_unlabeled_presets();
     info!("automation ready");
     engine.set_status(Tone::Info, "Ready");
 
@@ -379,6 +382,23 @@ impl Engine {
                     ),
                 );
                 self.refresh_presets();
+            }
+            UiCommand::IdentifyPreset { preset } => {
+                let presets = load_presets(&self.presets_path)?;
+                let loaded = presets
+                    .get(&preset)
+                    .with_context(|| format!("{preset} is not saved"))?
+                    .clone();
+                self.set_status(Tone::Working, format!("Identifying {}", self.preset_display_name(&preset)));
+                let ids = self.identify_preset_templates(&preset, &loaded, true);
+                let identified = ids.iter().flatten().count();
+                self.set_status(
+                    if identified == 4 { Tone::Success } else { Tone::Warning },
+                    format!(
+                        "{}: {identified}/4 stratagems identified",
+                        self.preset_display_name(&preset)
+                    ),
+                );
             }
             UiCommand::DeletePreset { preset } => {
                 preset::delete_preset(&self.presets_path, &preset)?;
@@ -946,39 +966,117 @@ impl Engine {
         allowed: Option<&[String]>,
     ) -> [Option<String>; 4] {
         std::array::from_fn(|index| {
-            let sample = samples.get(index)?;
-            match self.identifier.identify(sample, allowed) {
-                Ok(identification) => {
-                    if identification.accepted.is_none() {
-                        info!(
-                            slot = index + 1,
-                            category = identification.category.label(),
-                            best = identification.best().map(|best| best.id.as_str()),
-                            score = identification.best().map(|best| best.score),
-                            margin = identification.margin,
-                            "stratagem in slot could not be identified with confidence"
-                        );
-                    } else {
-                        debug!(
-                            slot = index + 1,
-                            stratagem = identification.accepted.as_deref(),
-                            score = identification.best().map(|best| best.score),
-                            margin = identification.margin,
-                            "stratagem identified"
-                        );
-                    }
-                    identification.accepted
-                }
-                Err(error) => {
-                    warn!(
-                        slot = index + 1,
-                        error = %format!("{error:#}"),
-                        "stratagem identification failed"
-                    );
-                    None
-                }
-            }
+            samples
+                .get(index)
+                .and_then(|sample| self.identify_one(index, sample, allowed))
         })
+    }
+
+    fn identify_one(
+        &self,
+        index: usize,
+        sample: &ImageSample,
+        allowed: Option<&[String]>,
+    ) -> Option<String> {
+        match self.identifier.identify(sample, allowed) {
+            Ok(identification) => {
+                if identification.accepted.is_none() {
+                    info!(
+                        slot = index + 1,
+                        category = identification.category.label(),
+                        best = identification.best().map(|best| best.id.as_str()),
+                        score = identification.best().map(|best| best.score),
+                        margin = identification.margin,
+                        "stratagem in slot could not be identified with confidence"
+                    );
+                } else {
+                    info!(
+                        slot = index + 1,
+                        stratagem = identification.accepted.as_deref(),
+                        score = identification.best().map(|best| best.score),
+                        margin = identification.margin,
+                        "stratagem identified"
+                    );
+                }
+                identification.accepted
+            }
+            Err(error) => {
+                warn!(
+                    slot = index + 1,
+                    error = %format!("{error:#}"),
+                    "stratagem identification failed"
+                );
+                None
+            }
+        }
+    }
+
+    /// Identifies the captured icons of a saved preset from its template files.
+    /// With `force`, already identified slots are re-evaluated too.
+    fn identify_preset_templates(
+        &mut self,
+        name: &str,
+        preset: &Preset,
+        force: bool,
+    ) -> [Option<String>; 4] {
+        let mut ids = preset.stratagem_ids();
+        for (index, template) in preset.stratagems.iter().enumerate().take(4) {
+            if ids[index].is_some() && !force {
+                continue;
+            }
+            match load_template_sample(&self.presets_path, template) {
+                Ok(sample) => ids[index] = self.identify_one(index, &sample, None),
+                Err(error) => warn!(
+                    preset = name,
+                    slot = index + 1,
+                    error = %format!("{error:#}"),
+                    "captured icon could not be loaded"
+                ),
+            }
+        }
+        if ids != preset.stratagem_ids() {
+            if let Err(error) = preset::set_preset_stratagems(&self.presets_path, name, &ids) {
+                warn!(error = %format!("{error:#}"), "failed to record identified stratagems");
+            }
+            if let Some(active) = &mut self.active
+                && active.preset == name
+                && active.source != ActiveSource::Applied
+            {
+                active.slots = ids.to_vec();
+                self.save_active();
+                self.publish_active();
+            }
+            self.refresh_presets();
+        }
+        ids
+    }
+
+    /// Labels presets saved before identification existed, or whose slots
+    /// were not identified at save time.
+    fn identify_unlabeled_presets(&mut self) {
+        let presets = match load_presets(&self.presets_path) {
+            Ok(presets) => presets,
+            Err(error) => {
+                warn!(error = %format!("{error:#}"), "presets could not be read for identification");
+                return;
+            }
+        };
+        for (name, preset) in presets {
+            if preset
+                .stratagems
+                .iter()
+                .all(|template| template.stratagem.is_some())
+            {
+                continue;
+            }
+            self.set_status(Tone::Working, format!("Identifying {name}"));
+            let ids = self.identify_preset_templates(&name, &preset, false);
+            info!(
+                preset = %name,
+                identified = ids.iter().flatten().count(),
+                "preset identified at startup"
+            );
+        }
     }
 
     fn save_last_failure(&mut self, action_error: &anyhow::Error) {

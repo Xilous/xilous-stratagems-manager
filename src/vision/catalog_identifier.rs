@@ -25,13 +25,21 @@ use super::{ImageSample, SampleGeometry};
 /// Pixel size the reference SVGs are rasterized at before extraction.
 pub const REFERENCE_RENDER_SIZE: u32 = 96;
 const ENV_PHASES: [f32; 5] = [-0.45, -0.225, 0.0, 0.225, 0.45];
-/// The wiki artwork and the on-screen icon do not share an exact scale, so each
-/// reference is compared at a few zoom levels and the best one counts.
-const SCALE_CANDIDATES: [f32; 3] = [0.92, 1.0, 1.08];
+/// Zoom of the reference relative to the on-screen tile. Measured on real
+/// captures: with the border masked, the wiki artwork matches the in-game
+/// tile 1:1, and a single global zoom stops wrong candidates from picking a
+/// zoom that happens to suit them.
+const SCALE_CANDIDATES: [f32; 1] = [1.0];
+/// Width of the border in the wiki artwork (14 of 256 px), plus anti-aliasing.
+const FRAME_FRACTION: f32 = 0.065;
+/// Loadout tile background in game; matches the extractor's fixed background.
+const TILE_BACKGROUND: u8 = 44;
 /// Best score at or below this is a plausible match (lower is better).
-pub const ACCEPT_SCORE: f64 = 0.60;
+/// Real captures score 0.06 (sentries) to 0.55 (support weapons).
+pub const ACCEPT_SCORE: f64 = 0.75;
 /// The runner-up must trail by at least this much for an unambiguous match.
-pub const ACCEPT_MARGIN: f64 = 0.03;
+/// The tightest real case observed was 0.19.
+pub const ACCEPT_MARGIN: f64 = 0.08;
 
 struct Reference {
     id: String,
@@ -135,7 +143,12 @@ impl CatalogIdentifier {
         })
     }
 
-    fn reference(id: String, category: StratagemCategory, image: RgbaImage) -> Result<Reference> {
+    fn reference(
+        id: String,
+        category: StratagemCategory,
+        mut image: RgbaImage,
+    ) -> Result<Reference> {
+        mask_frame(&mut image);
         let sample = ImageSample {
             geometry: SampleGeometry {
                 center_x: image.width() as f32 * 0.5,
@@ -294,9 +307,168 @@ impl CatalogIdentifier {
     }
 }
 
+/// The wiki artwork draws a colored border around the icon that the in-game
+/// loadout tile does not have; paint it with the tile background so it cannot
+/// contribute to the match.
+fn mask_frame(image: &mut RgbaImage) {
+    let width = image.width();
+    let height = image.height();
+    let band_x = (width as f32 * FRAME_FRACTION).ceil() as u32;
+    let band_y = (height as f32 * FRAME_FRACTION).ceil() as u32;
+    for (x, y, pixel) in image.enumerate_pixels_mut() {
+        if x < band_x || y < band_y || x >= width - band_x || y >= height - band_y {
+            pixel.0 = [TILE_BACKGROUND, TILE_BACKGROUND, TILE_BACKGROUND, 255];
+        }
+    }
+}
+
+#[cfg(test)]
+impl CatalogIdentifier {
+    /// Scores `sample` against every reference of its category at one zoom
+    /// level. Returns the score of `expected_id` and the best other candidate.
+    fn sweep_scores(
+        &self,
+        sample: &ImageSample,
+        expected_id: &str,
+        scale: f32,
+    ) -> Result<(f64, String, f64)> {
+        let source = SemanticSource::prepare(sample)?;
+        let category = source.infer_category()?;
+        let extraction = source.extract(category)?;
+        let target_size = (
+            sample.image.width() as usize,
+            sample.image.height() as usize,
+        );
+        let target_center = (sample.geometry.center_x, sample.geometry.center_y);
+        let candidate_physical_size = sample.geometry.physical_size;
+        let mut expected = f64::INFINITY;
+        let mut best_other = ("".to_string(), f64::INFINITY);
+        for reference in self.references.iter().filter(|r| r.category == category) {
+            let physical_size = reference.physical_size / scale;
+            let mut env = Vec::with_capacity(25);
+            for phase_y in ENV_PHASES {
+                for phase_x in ENV_PHASES {
+                    env.push(render_to_raster(
+                        &reference.semantic,
+                        physical_size,
+                        target_size,
+                        target_center,
+                        candidate_physical_size,
+                        (phase_x, phase_y),
+                    ));
+                }
+            }
+            let template = prepare_template(
+                &reference.semantic,
+                physical_size,
+                &env,
+                candidate_physical_size,
+                MatchDomain::Full,
+                true,
+            )?;
+            let score = compare(&template, &extraction.image, candidate_physical_size)?.score;
+            if reference.id == expected_id {
+                expected = score;
+            } else if score < best_other.1 {
+                best_other = (reference.id.clone(), score);
+            }
+        }
+        Ok((expected, best_other.0, best_other.1))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn real_capture_samples() -> Vec<(String, ImageSample)> {
+        let dir = std::env::var("XSM_TEMPLATE_DIR")
+            .unwrap_or_else(|_| "target/release/data/local_templates/preset_1".to_string());
+        let ids = std::env::var("XSM_TEMPLATE_IDS").unwrap_or_else(|_| {
+            "a-mg-43-machine-gun-sentry,a-g-16-gatling-sentry,faf-14-spear,gr-8-recoilless-rifle"
+                .to_string()
+        });
+        let mut samples = Vec::new();
+        for (index, id) in ids.split(',').enumerate() {
+            let path = format!("{dir}/stratagem-{}.png", index + 1);
+            let Ok(bytes) = std::fs::read(&path) else {
+                eprintln!("skipping {path}: not found");
+                continue;
+            };
+            let image = crate::assets::decode_rgba8(&bytes).expect("template png");
+            samples.push((
+                id.to_string(),
+                ImageSample {
+                    geometry: SampleGeometry {
+                        center_x: image.width() as f32 * 0.5,
+                        center_y: image.height() as f32 * 0.5,
+                        physical_size: 69.975,
+                    },
+                    image,
+                },
+            ));
+        }
+        samples
+    }
+
+    /// Real loadout-screen captures must be accepted through the public path.
+    #[test]
+    #[ignore = "needs real captures under target/release/data/local_templates"]
+    fn real_captures_are_identified() {
+        let samples = real_capture_samples();
+        if samples.is_empty() {
+            return;
+        }
+        let catalog = Catalog::load().expect("catalog");
+        let identifier = CatalogIdentifier::from_catalog(&catalog).expect("identifier");
+        for (id, sample) in &samples {
+            let identification = identifier.identify(sample, None).expect("identify");
+            eprintln!(
+                "{id}: accepted={:?} best={:?} score={:?} margin={:.3}",
+                identification.accepted,
+                identification.best().map(|best| best.id.as_str()),
+                identification.best().map(|best| best.score),
+                identification.margin
+            );
+            assert_eq!(identification.accepted.as_deref(), Some(id.as_str()));
+        }
+    }
+
+    /// Prints how real loadout-screen captures score against their catalog
+    /// entries across zoom levels. Set XSM_TEMPLATE_DIR to a preset template
+    /// directory and XSM_TEMPLATE_IDS to the four expected ids (comma-separated).
+    #[test]
+    #[ignore = "diagnostic; run with --nocapture"]
+    fn real_capture_scale_sweep() {
+        let catalog = Catalog::load().expect("catalog");
+        let identifier = CatalogIdentifier::from_catalog(&catalog).expect("identifier");
+        let samples = real_capture_samples();
+        let scales = std::env::var("XSM_SCALES").unwrap_or_else(|_| {
+            "0.95,1.00,1.025,1.05,1.075,1.10,1.125,1.15,1.175,1.20,1.25".to_string()
+        });
+        for scale in scales.split(',').map(|s| s.trim().parse::<f32>().expect("scale")) {
+            let mut total = 0.0;
+            let mut min_margin = f64::INFINITY;
+            let mut lines = Vec::new();
+            for (id, sample) in &samples {
+                let (expected, other_id, other) =
+                    identifier.sweep_scores(sample, id, scale).expect("sweep");
+                total += expected;
+                min_margin = min_margin.min(other - expected);
+                lines.push(format!(
+                    "    {id:<28} true={expected:.3}  other={other:.3} ({other_id})  margin={:+.3}",
+                    other - expected
+                ));
+            }
+            eprintln!(
+                "scale {scale:.3}: mean true={:.3}  min margin={min_margin:+.3}",
+                total / samples.len().max(1) as f64
+            );
+            for line in lines {
+                eprintln!("{line}");
+            }
+        }
+    }
 
     /// Simulates an on-screen slot: the reference rendered smaller, dimmed, and
     /// slightly off-center, then identified against the whole catalog.
@@ -309,6 +481,8 @@ mod tests {
         let mut checked = 0;
         for entry in catalog.loadout_entries().step_by(4) {
             let mut image = catalog.render_icon(&entry.id, 70).expect("render");
+            // In-game tiles have no border; simulate that like the references do.
+            mask_frame(&mut image);
             for pixel in image.pixels_mut() {
                 for channel in &mut pixel.0[..3] {
                     *channel = (*channel as f32 * 0.88) as u8;
@@ -316,9 +490,9 @@ mod tests {
             }
             let sample = ImageSample {
                 geometry: SampleGeometry {
-                    center_x: 35.6,
-                    center_y: 34.5,
-                    physical_size: 66.0,
+                    center_x: 35.4,
+                    center_y: 34.7,
+                    physical_size: 70.0,
                 },
                 image,
             };

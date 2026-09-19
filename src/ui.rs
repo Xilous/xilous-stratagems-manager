@@ -428,6 +428,11 @@ impl App {
                             preset: preset.name.clone(),
                         });
                     }
+                    if ui.button("Identify").on_hover_text("Re-run stratagem identification on the captured icons").clicked() {
+                        self.handle.send(UiCommand::IdentifyPreset {
+                            preset: preset.name.clone(),
+                        });
+                    }
                 });
             });
         });

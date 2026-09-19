@@ -129,6 +129,10 @@ pub enum UiCommand {
     DeletePreset {
         preset: String,
     },
+    /// Re-run stratagem identification on the captured icons of a preset.
+    IdentifyPreset {
+        preset: String,
+    },
     SetActiveFromPreset {
         preset: String,
     },
