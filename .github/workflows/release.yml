@@ -118,15 +118,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = @"
-**Download ``$env:SETUP_NAME`` below and run it.** It installs for the current user (no administrator rights), adds a Start Menu entry, and can optionally add a desktop shortcut and start with Windows. Uninstall from *Apps & features*; your presets are kept unless you choose to remove them.
-
-Prefer no installer? ``XilousStratagemsManager.exe`` is the portable build: put it in a folder of its own and run it.
-
-Windows SmartScreen may warn about an unsigned download: choose *More info* → *Run anyway*. All files carry a GitHub build attestation (``gh attestation verify <file> --owner Xilous``).
-
-See the [README](https://github.com/Xilous/xilous-stratagems-manager#readme) for setup, in particular the arrow-key stratagem input setting in the game.
-"@
+          $notes = @(
+            "**Download ``$env:SETUP_NAME`` below and run it.** It installs for the current user (no administrator rights), adds a Start Menu entry, and can optionally add a desktop shortcut and start with Windows. Uninstall from *Apps & features*; your presets are kept unless you choose to remove them.",
+            "",
+            "Prefer no installer? ``XilousStratagemsManager.exe`` is the portable build: put it in a folder of its own and run it.",
+            "",
+            "Windows SmartScreen may warn about an unsigned download: choose *More info* > *Run anyway*. All files carry a GitHub build attestation (``gh attestation verify <file> --owner Xilous``).",
+            "",
+            "See the [README](https://github.com/Xilous/xilous-stratagems-manager#readme) for setup, in particular the arrow-key stratagem input setting in the game."
+          ) -join "`n"
 
           $releaseArgs = @(
             "release", "create", $env:GITHUB_REF_NAME,
